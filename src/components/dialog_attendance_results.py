@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 from src.database.db import DatabaseError, save_attendance_session
 from src.services.attendance import apply_review_edits
@@ -6,18 +7,30 @@ from src.services.attendance import apply_review_edits
 
 def show_attendance_result(df, logs):
     """Editable review table. Nothing is saved until the teacher confirms; edits are recorded as manual."""
-    flagged = int((df["Review"] != "").sum())
-    st.write("Review attendance before confirming. Tick or untick **Present** to correct any row.")
-    if flagged:
-        st.warning(f"{flagged} student(s) need your attention (listed first). Automatic matching was not certain for them.")
-    edited = st.data_editor(
-        df,
-        hide_index=True,
-        width="stretch",
-        disabled=["ID", "Name", "Evidence", "Review"],
-        column_config={"ID": None, "Present": st.column_config.CheckboxColumn("Present", help="Editable")},
-        key=f"review_editor_{logs[0]['timestamp'] if logs else 'x'}",
-    )
+    st.write("Review attendance before confirming. Tick **Present** for anyone who attended.")
+    timestamp = logs[0]["timestamp"] if logs else "x"
+    headers = st.columns([2.0, 0.8, 0.9, 1.5, 2.2])
+    for col, label in zip(headers, ("Name", "Mark present", "Status", "Evidence", "Review")):
+        col.markdown(f"**{label}**")
+
+    edited_rows = []
+    for _, row in df.iterrows():
+        cells = st.columns([2.0, 0.8, 0.9, 1.5, 2.2], vertical_alignment="center")
+        cells[0].write(row["Name"])
+        is_present = cells[1].checkbox(
+            "Present",
+            value=bool(row["Present"]),
+            key=f"review_present_{timestamp}_{int(row['ID'])}",
+            label_visibility="collapsed",
+        )
+        status_color = "#16803c" if is_present else "#c62828"
+        status_text = "Present" if is_present else "Absent"
+        cells[2].markdown(f"<span style='color:{status_color};font-weight:600'>{status_text}</span>", unsafe_allow_html=True)
+        cells[3].write(row["Evidence"])
+        cells[4].write(row["Review"])
+        edited_rows.append({"ID": int(row["ID"]), "Present": is_present})
+
+    edited = df[["ID"]].merge(pd.DataFrame(edited_rows), on="ID", how="left")
     final = apply_review_edits(logs, edited)
     n_present = sum(1 for l in final if l["is_present"])
     n_manual = sum(1 for l in final if l.get("source") == "manual")

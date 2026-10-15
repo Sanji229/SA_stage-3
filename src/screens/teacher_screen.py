@@ -16,7 +16,7 @@ from src.database import db
 from src.screens.admin_ui import admin_tab
 from src.screens.marks_ui import teacher_marks_tab
 from src.database.db import DatabaseError
-from src.pipelines.face_pipeline import analyze_photo, confusable_pairs
+from src.pipelines.face_pipeline import analyze_photo
 from src.services.attendance import (
     DEFAULT_MIN_ATTENDANCE,
     attendance_trend,
@@ -168,14 +168,6 @@ def tab_take_attendance():
         return
 
     allowed = {int(s["student_id"]) for s in enrolled}
-    pairs = confusable_pairs(db.get_enrolled_face_rows(teacher_id, subject_id))
-    if pairs:
-        names = {s["student_id"]: s["name"] for s in enrolled}
-        st.warning(
-            "Data quality: some enrolled students have nearly identical stored faces, so automatic matching cannot "
-            "tell them apart: " + "; ".join(f"{names.get(a, a)} ↔ {names.get(b, b)}" for a, b, _ in pairs[:5])
-            + (f" (+{len(pairs) - 5} more)" if len(pairs) > 5 else "") + ". Their attendance will be sent for review."
-        )
     try:
         results = []
         with st.spinner("Scanning classroom photos…"):
@@ -230,6 +222,35 @@ def tab_subjects():
                 stats=[("🫂", "students", sub["total_students"]), ("🕰️", "classes", sub["total_classes"])],
                 footer_callback=share_ui,
             )
+            with st.expander(f"Edit {sub['name']}"):
+                with st.form(f"edit_subject_{sub['subject_id']}"):
+                    edited_name = st.text_input("Subject name", value=sub["name"], max_chars=100)
+                    edited_code = st.text_input("Subject code", value=sub["subject_code"], max_chars=20)
+                    edited_section = st.text_input("Section", value=sub["section"], max_chars=20)
+                    save_subject = st.form_submit_button("Save changes", type="primary")
+                if save_subject:
+                    try:
+                        db.update_subject(teacher_id, sub["subject_id"], edited_code, edited_name, edited_section)
+                        st.success("Subject updated.")
+                        st.rerun()
+                    except DatabaseError as exc:
+                        st.error(str(exc))
+
+                st.caption("Deleting a subject permanently removes its enrollments, attendance records, assessments, and marks.")
+                confirm_delete = st.checkbox(
+                    "I understand this cannot be undone",
+                    key=f"confirm_delete_subject_{sub['subject_id']}",
+                )
+                if st.button(
+                    "Delete subject", key=f"delete_subject_{sub['subject_id']}",
+                    type="secondary", disabled=not confirm_delete,
+                ):
+                    try:
+                        db.delete_subject(teacher_id, sub["subject_id"])
+                        st.success(f"{sub['name']} deleted.")
+                        st.rerun()
+                    except DatabaseError as exc:
+                        st.error(str(exc))
 
 
 # --------------------------------------------------------------------- records

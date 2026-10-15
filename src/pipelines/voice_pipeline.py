@@ -18,7 +18,9 @@ from src.settings import VOICE_MATCH_MARGIN, VOICE_MATCH_THRESHOLD
 
 log = logging.getLogger("smartattend.voice")
 SAMPLE_RATE = 16000
-MIN_SEGMENT_SECONDS = 0.5
+MIN_SEGMENT_SECONDS = 1.5
+VOICE_PROFILE_MIN_SECONDS = 5.0
+TURN_GAP_SECONDS = 0.7
 
 
 class VoiceError(RuntimeError):
@@ -49,9 +51,18 @@ def get_voice_embedding(audio_bytes: bytes) -> list[float]:
     from resemblyzer import preprocess_wav
 
     audio = _load_audio(audio_bytes)
+    quality = assess_audio(audio)
+    if quality.fatal:
+        raise VoiceError(" ".join(quality.issues))
+    if quality.duration < VOICE_PROFILE_MIN_SECONDS:
+        raise VoiceError("Record at least 5 seconds of clear speech for a reliable voice profile.")
     try:
         wav = preprocess_wav(audio)
+        if len(wav) < SAMPLE_RATE:
+            raise VoiceError("Not enough clear speech was detected. Record at least one second of speech.")
         return load_voice_encoder().embed_utterance(wav).tolist()
+    except VoiceError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.exception("Voice embedding failed")
         raise VoiceError("Could not analyse the voice recording. Try a longer, clearer sample.") from exc
@@ -148,6 +159,7 @@ def identify_speaker(new_embedding, candidates_dict: dict[int, list[float]], thr
 class BulkVoiceResult:
     matched: dict[int, float] = field(default_factory=dict)
     ambiguous: list[list[int]] = field(default_factory=list)  # candidate groups needing review
+    best_scores: list[float] = field(default_factory=list)
     segments: int = 0
     quality: AudioQuality | None = None
 
@@ -164,7 +176,18 @@ def process_bulk_audio_detailed(audio_bytes: bytes, candidates: dict[int, list[f
         raise VoiceError(" ".join(quality.issues))
     encoder = load_voice_encoder()
     out = BulkVoiceResult(quality=quality)
-    for start, end in librosa.effects.split(audio, top_db=30):
+    spans = librosa.effects.split(audio, top_db=30).tolist()
+    # Keep the words in one spoken turn together. Without this, short word-sized
+    # fragments produce unstable speaker embeddings and are often rejected.
+    turns = []
+    max_gap = int(TURN_GAP_SECONDS * SAMPLE_RATE)
+    for start, end in spans:
+        if turns and start - turns[-1][1] <= max_gap:
+            turns[-1][1] = end
+        else:
+            turns.append([start, end])
+
+    for start, end in turns:
         if (end - start) < SAMPLE_RATE * MIN_SEGMENT_SECONDS:
             continue
         try:
@@ -174,6 +197,7 @@ def process_bulk_audio_detailed(audio_bytes: bytes, candidates: dict[int, list[f
             continue
         out.segments += 1
         m = rank_speakers(embedding, candidates, threshold, margin)
+        out.best_scores.append(m.score)
         if m.status == "matched" and m.score > out.matched.get(m.student_id, -1.0):
             out.matched[m.student_id] = m.score
         elif m.status == "ambiguous":

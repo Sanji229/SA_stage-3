@@ -405,6 +405,18 @@ def get_student(student_id: int) -> Optional[dict]:
     return rows[0] if rows else None
 
 
+def update_student_voice_embedding(student_id: int, voice_embedding) -> None:
+    """Save a student's voice profile after validating its shape and values."""
+    try:
+        voice = biometrics.clean_embedding(voice_embedding, biometrics.VOICE_DIM, "Voice")
+    except ValueError as exc:
+        raise InvalidInput(f"Voice enrolment failed: {exc}") from None
+    _run(
+        _t("students").update({"voice_embedding": voice}).eq("student_id", int(student_id)),
+        "save your voice profile",
+    )
+
+
 def create_student(new_name: str, face_embedding=None, voice_embedding=None):
     """Create a student profile. All checks run here, whatever the caller (UI or script) did.
 
@@ -453,6 +465,36 @@ def create_subject(subject_code: str, name: str, section: str, teacher_id: int):
         return _run(_t("subjects").insert(data), "create the subject")
     except DuplicateError as exc:
         raise DuplicateError("That subject code is already in use. Choose a different one.") from exc
+
+
+def update_subject(teacher_id: int, subject_id: int, subject_code: str, name: str, section: str) -> dict:
+    """Update a subject owned by the active teacher."""
+    require_active_teacher(teacher_id)
+    assert_teacher_owns_subject(teacher_id, subject_id)
+    code, name, section = _valid(clean_subject_fields, subject_code, name, section)
+    try:
+        rows = _run(
+            _t("subjects").update({"subject_code": code, "name": name, "section": section})
+            .eq("subject_id", subject_id).eq("teacher_id", teacher_id),
+            "update the subject",
+        )
+    except DuplicateError as exc:
+        raise DuplicateError("That subject code is already in use. Choose a different one.") from exc
+    if not rows:
+        raise DatabaseError("Subject not found or you do not have permission to update it.")
+    return rows[0]
+
+
+def delete_subject(teacher_id: int, subject_id: int) -> None:
+    """Delete an owned subject. Related enrollments, attendance and assessments cascade."""
+    require_active_teacher(teacher_id)
+    assert_teacher_owns_subject(teacher_id, subject_id)
+    rows = _run(
+        _t("subjects").delete().eq("subject_id", subject_id).eq("teacher_id", teacher_id),
+        "delete the subject",
+    )
+    if not rows:
+        raise DatabaseError("Subject not found or you do not have permission to delete it.")
 
 
 def get_subject_by_code(code: str) -> Optional[dict]:

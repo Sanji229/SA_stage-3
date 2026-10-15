@@ -14,6 +14,7 @@ from src.database.db import (
     get_student,
     get_student_attendance,
     get_student_subjects,
+    update_student_voice_embedding,
     unenroll_student_to_subject,
 )
 from src.pipelines.face_pipeline import analyze_photo, clear_gallery_cache, get_face_embeddings
@@ -74,6 +75,21 @@ def student_dashboard():
     m3.metric("Overall attendance", "–" if rate is None else f"{rate}%")
     st.write("")
 
+    with st.expander("Set up voice attendance"):
+        st.write("Record at least 5 seconds of clear speech while alone. Use your normal speaking voice; you can replace this sample anytime.")
+        voice_sample = st.audio_input("Record your voice sample", key="student_voice_profile")
+        if st.button("Save voice profile", key="save_voice_profile", disabled=voice_sample is None):
+            try:
+                with st.spinner("Processing your voice sample…"):
+                    embedding = get_voice_embedding(check_audio_bytes(voice_sample.getvalue()))
+                    update_student_voice_embedding(student["student_id"], embedding)
+            except (ValidationError, VoiceError, DatabaseError) as exc:
+                st.error(str(exc))
+            except ImportError:
+                st.error("Voice recognition is not installed on this server.")
+            else:
+                st.success("Voice profile saved. You can record a new sample here to replace it.")
+
     if not subjects:
         empty_state("You are not enrolled in any subject yet. Use <b>Enroll in subject</b> and enter the code from your teacher.")
         footer_dashboard()
@@ -126,7 +142,7 @@ def _registration_form(photo) -> None:
         st.markdown("**Optional: voice enrollment** for voice-only attendance")
         audio = None
         try:
-            audio = st.audio_input("Record a short phrase, e.g. “My name is Akash, I am present.”")
+            audio = st.audio_input("Optional voice profile (speak alone for at least 5 seconds)")
         except Exception:  # noqa: BLE001
             st.info("Audio recording is not available in this browser.")
 

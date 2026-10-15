@@ -24,7 +24,7 @@ def get_setting(name: str, default: Optional[str] = None) -> Optional[str]:
 
 # Tunable recognition thresholds (documented in README).
 FACE_MATCH_THRESHOLD = float(get_setting("FACE_MATCH_THRESHOLD", "0.45"))
-VOICE_MATCH_THRESHOLD = float(get_setting("VOICE_MATCH_THRESHOLD", "0.65"))
+VOICE_MATCH_THRESHOLD = float(get_setting("VOICE_MATCH_THRESHOLD", "0.55"))
 # Ambiguity margin: if the 2nd-best candidate is also within the threshold and closer than
 # this to the best, the face is sent to teacher review instead of auto-assigned.
 # PROVISIONAL default: not yet tuned on real labelled data (see evaluation/README).

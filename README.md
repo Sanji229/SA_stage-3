@@ -32,7 +32,7 @@ policies; the app uses a **server-side key** and enforces authorisation in `src/
 | `SUPABASE_URL`, `SUPABASE_KEY` | Required. Server-side only; never commit or expose. |
 | `APP_BASE_URL` | Public app URL for join links/QR (optional). |
 | `FACE_MATCH_THRESHOLD` | Max face distance for a match (default 0.6; lower = stricter). |
-| `VOICE_MATCH_THRESHOLD` | Min cosine similarity for a voice match (default 0.65). |
+| `VOICE_MATCH_THRESHOLD` | Min cosine similarity for a voice match (default 0.55). |
 
 Read from environment variables first, then `.streamlit/secrets.toml`.
 
