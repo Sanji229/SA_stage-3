@@ -341,7 +341,8 @@ def teacher_screen_login():
     show_flash()
     page_header("Teacher login", "Sign in to manage subjects and take attendance.")
     with st.form("teacher_login"):
-        username = st.text_input("Username", placeholder="ananyaroy", autocomplete="username")
+        username = st.text_input("Username", placeholder="ananya7", max_chars=32, autocomplete="username",
+                                 help="3-32 characters; include at least one letter and one number. Dot, dash and underscore are also allowed.")
         password = st.text_input("Password", type="password", autocomplete="current-password")
         submitted = st.form_submit_button("Log in", type="primary", width="stretch")
     if submitted:
@@ -370,8 +371,10 @@ def teacher_screen_register():
     page_header("Teacher sign-up (invitation only)", "Ask an administrator for an invitation code. Each code works once and stays valid until used or revoked.")
     with st.form("teacher_register"):
         token = st.text_input("Invitation code", max_chars=100, autocomplete="off")
-        username = st.text_input("Username", placeholder="ananyaroy", autocomplete="username")
-        name = st.text_input("Full name", placeholder="Ananya Roy", max_chars=60)
+        username = st.text_input("Username", placeholder="ananya7", max_chars=32, autocomplete="username",
+                                 help="3-32 characters; include at least one letter and one number. Dot, dash and underscore are also allowed.")
+        name = st.text_input("Full name", placeholder="Ananya Roy", max_chars=60,
+                             help="Use letters, spaces, apostrophes, hyphens or dots; numbers are not allowed.")
         password = st.text_input("Password", type="password", autocomplete="new-password")
         confirm = st.text_input("Confirm password", type="password", autocomplete="new-password")
         submitted = st.form_submit_button("Create account", type="primary", width="stretch")
@@ -402,8 +405,10 @@ def _admin_setup_panel():
         st.caption("Needs the ADMIN_SETUP_TOKEN from your server secrets. This disappears once an administrator exists.")
         with st.form("admin_setup"):
             setup_token = st.text_input("Setup token", type="password", autocomplete="off")
-            username = st.text_input("Admin username", autocomplete="username")
-            name = st.text_input("Full name", max_chars=60)
+            username = st.text_input("Admin username", max_chars=32, autocomplete="username",
+                                     help="3-32 characters; include at least one letter and one number. Dot, dash and underscore are also allowed.")
+            name = st.text_input("Full name", max_chars=60,
+                                 help="Use letters, spaces, apostrophes, hyphens or dots; numbers are not allowed.")
             password = st.text_input("Password", type="password", autocomplete="new-password")
             confirm = st.text_input("Confirm password", type="password", autocomplete="new-password")
             if st.form_submit_button("Create administrator", type="primary"):

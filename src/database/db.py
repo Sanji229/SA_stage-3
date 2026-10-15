@@ -14,13 +14,19 @@ import bcrypt
 from src import settings as cfg
 from src.database.config import ConfigError, get_supabase
 from src.services import biometrics
-from src.validation import ValidationError, clean_person_name, clean_reason, clean_subject_fields
+from src.validation import (
+    ValidationError,
+    clean_login_username,
+    clean_person_name,
+    clean_reason,
+    clean_subject_fields,
+    clean_username,
+)
 
 log = logging.getLogger("smartattend.db")
 
 MAX_PASSWORD_BYTES = 72  # bcrypt silently truncates beyond this
 MIN_PASSWORD_LEN = 8
-USERNAME_RE = re.compile(r"^[a-z0-9_.-]{3,32}$")
 
 
 class DatabaseError(RuntimeError):
@@ -59,6 +65,11 @@ def _run(builder, action: str) -> list[dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001 - convert to a user-safe error
         if _is_unique_violation(exc):
             raise DuplicateError(f"Could not {action}: that value already exists.") from exc
+        message = str(exc).lower()
+        if action == "create the invitation" and "expires_at" in message and ("not-null" in message or "not null" in message):
+            raise DatabaseError(
+                "The deployed database still requires an invitation expiry. Deploy the latest app code or apply migration 006."
+            ) from exc
         log.exception("Database error while trying to %s", action)
         raise DatabaseError(f"Could not {action}. Please try again.") from exc
 
@@ -91,10 +102,13 @@ def normalize_username(username: str) -> str:
 
 def validate_registration(username: str, name: str, password: str, confirm: str) -> Optional[str]:
     """Return an error message, or None when the input is valid."""
-    if not username or not name.strip() or not password:
+    if not username or not str(name or "").strip() or not password:
         return "All fields are required."
-    if not USERNAME_RE.match(normalize_username(username)):
-        return "Username must be 3-32 characters: letters, numbers, dot, dash or underscore."
+    try:
+        clean_username(username)
+        clean_person_name(name, "Full name")
+    except ValidationError as exc:
+        return str(exc)
     if len(password) < MIN_PASSWORD_LEN:
         return f"Password must be at least {MIN_PASSWORD_LEN} characters."
     if len(password.encode()) > MAX_PASSWORD_BYTES:
@@ -106,7 +120,8 @@ def validate_registration(username: str, name: str, password: str, confirm: str)
 
 # ---------------------------------------------------------------------- teachers
 def check_teacher_exists(username: str) -> bool:
-    rows = _run(_t("teachers").select("username").eq("username", normalize_username(username)), "check the username")
+    username = _valid(clean_username, username)
+    rows = _run(_t("teachers").select("username").eq("username", username), "check the username")
     return len(rows) > 0
 
 
@@ -188,7 +203,9 @@ def require_admin(teacher_id) -> dict:
 
 # ------------------------------------------------------------------------ accounts
 def _insert_teacher(username: str, password: str, name: str, role: str = "teacher") -> dict:
-    data = {"username": normalize_username(username), "password": hash_pass(password), "name": name.strip()}
+    username = _valid(clean_username, username)
+    name = _valid(clean_person_name, name, "Full name")
+    data = {"username": username, "password": hash_pass(password), "name": name}
     if role != "teacher":
         data["role"] = role
     try:
@@ -207,7 +224,7 @@ def create_teacher(username: str, password: str, name: str):
 
 
 def teacher_login(username: str, password: str) -> Optional[dict]:
-    key = normalize_username(username)
+    key = _valid(clean_login_username, username)
     check_throttle("teacher_login", key, cfg.LOGIN_MAX_FAILURES, cfg.LOGIN_WINDOW_MINUTES)
     rows = _run(_t("teachers").select("*").eq("username", key), "sign in")
     ok = False
@@ -233,11 +250,16 @@ def create_invitation(admin_id: int, role: str = "teacher", days: int | None = N
     require_admin(admin_id)
     if role not in ("teacher", "admin"):
         raise InvalidInput("Invalid role.")
+    note = " ".join(str(note or "").split())
+    if note:
+        note = _valid(clean_person_name, note, "Recipient name")
     # `days` remains accepted for compatibility with older callers; new codes do not expire.
     token = secrets.token_urlsafe(24)
     _run(_t("teacher_invitations").insert({
-        "token_hash": _token_hash(token), "role": role, "note": " ".join(str(note or "").split())[:100],
-        "created_by": admin_id, "expires_at": None,
+        "token_hash": _token_hash(token), "role": role, "note": note,
+        # Keep compatibility with deployments where migration 006 has not run yet
+        # (their column is still NOT NULL). Expiry is not used by the app.
+        "created_by": admin_id, "expires_at": _iso(datetime(9999, 12, 31, tzinfo=timezone.utc)),
     }), "create the invitation")
     return token
 

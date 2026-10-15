@@ -138,7 +138,8 @@ def _registration_form(photo) -> None:
     with st.container(border=True):
         st.subheader("Create your profile")
         st.caption("Your face (and optional voice) is converted to numbers for matching. The photo itself is not stored.")
-        name = st.text_input("Your name", placeholder="e.g. Hamza Rizvi", max_chars=60)
+        name = st.text_input("Your name", placeholder="e.g. Hamza Rizvi", max_chars=60,
+                             help="Use letters, spaces, apostrophes, hyphens or dots; numbers are not allowed.")
         st.markdown("**Optional: voice enrollment** for voice-only attendance")
         audio = None
         try:

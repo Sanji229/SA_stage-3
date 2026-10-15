@@ -15,7 +15,10 @@ def admin_tab(admin_id: int) -> None:
     st.subheader("Invite a teacher")
     with st.form("create_invite"):
         c1, c2 = st.columns([2, 1])
-        note = c1.text_input("Note (who is this for?)", max_chars=100, placeholder="e.g. Dr. Rao, Physics")
+        note = c1.text_input(
+            "Recipient name (optional)", max_chars=60, placeholder="e.g. Dr. Rao",
+            help="Use letters, spaces, apostrophes, hyphens or dots; numbers are not allowed.",
+        )
         role = c2.selectbox("Role", ["teacher", "admin"])
         if st.form_submit_button("Create invitation", type="primary"):
             try:

@@ -24,6 +24,7 @@ ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG"}
 
 _NAME_ALLOWED = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .'\u2019-])*$", re.UNICODE)
 _CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,19}$")
+_USERNAME_RE = re.compile(r"^[a-z0-9_.-]{3,32}$")
 
 
 def _no_controls(text: str, label: str) -> None:
@@ -40,6 +41,23 @@ def clean_person_name(name, label: str = "Name") -> str:
     _no_controls(text, label)
     if not _NAME_ALLOWED.match(text):
         raise ValidationError(f"{label} may contain letters, spaces, apostrophes, hyphens and dots only.")
+    return text
+
+
+def clean_username(username) -> str:
+    text = str(username or "").strip().lower()
+    if not _USERNAME_RE.fullmatch(text):
+        raise ValidationError("Username must be 3-32 characters using letters, numbers, dot, dash or underscore.")
+    if not any(c.isalpha() for c in text) or not any(c.isdigit() for c in text):
+        raise ValidationError("Username must include at least one letter and one number.")
+    return text
+
+
+def clean_login_username(username) -> str:
+    """Validate username syntax at login while allowing legacy all-letter usernames."""
+    text = str(username or "").strip().lower()
+    if not _USERNAME_RE.fullmatch(text):
+        raise ValidationError("Username must be 3-32 characters using letters, numbers, dot, dash or underscore.")
     return text
 
 
