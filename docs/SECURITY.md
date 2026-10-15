@@ -14,12 +14,12 @@ DB-enforced per-user policies: a larger change that needs your decision.
 | Who | How they get access |
 |---|---|
 | Student | Public registration with a face photo (rate-limited; duplicate faces rejected) |
-| Teacher | **Only** via a single-use, expiring invitation created by an administrator (`register_teacher_with_invite`) |
+| Teacher | **Only** via a single-use invitation created by an administrator (`register_teacher_with_invite`); codes stay valid until used or revoked |
 | Administrator | First one: `ADMIN_SETUP_TOKEN` + one-time setup form (closes after use; unique DB claim makes it atomic). Later ones: admin invitation |
 
 `teachers.role` / `teachers.status` are authoritative. Every teacher operation calls `require_active_teacher()` which re-reads them
 from the database; the session's copy of the role only decides which tabs to *display*. Invitation tokens are 192-bit random,
-shown once, stored only as SHA-256, consumed with an atomic `UPDATE … WHERE used_at IS NULL AND expires_at > now()`.
+shown once and stored only as SHA-256; codes are consumed atomically and stay valid until used or revoked.
 Existing teachers keep working (migration 004 defaults: `teacher` / `active`).
 
 ## Abuse protection (`auth_attempts`, database-backed)

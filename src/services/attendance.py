@@ -74,6 +74,8 @@ def records_to_frame(records: Iterable[Mapping]) -> pd.DataFrame:
         parsed = parse_ts(r.get("timestamp"))
         student = r.get("students") or {}
         subject = r.get("subjects") or {}
+        status = r.get("student_status") or ("active" if r.get("student_id") is not None else "deleted")
+        status_labels = {"active": "Active", "unenrolled": "Unenrolled", "deleted": "Deleted"}
         data.append(
             {
                 "session": r.get("timestamp"),
@@ -82,12 +84,13 @@ def records_to_frame(records: Iterable[Mapping]) -> pd.DataFrame:
                 "when": parsed,
                 "Subject": subject.get("name", "?"),
                 "Subject Code": subject.get("subject_code", "?"),
-                "Student": student.get("name", f"#{r.get('student_id')}"),
+                "Student": r.get("student_name") or student.get("name") or f"#{r.get('student_id')}",
+                "Student status": status_labels.get(status, str(status).title()),
                 "Present": bool(r.get("is_present")),
             }
         )
     return pd.DataFrame(
-        data, columns=["session", "subject_id", "student_id", "when", "Subject", "Subject Code", "Student", "Present"]
+        data, columns=["session", "subject_id", "student_id", "when", "Subject", "Subject Code", "Student", "Student status", "Present"]
     )
 
 

@@ -7,7 +7,8 @@
 alter table teachers add column if not exists role   text not null default 'teacher' check (role in ('teacher','admin'));
 alter table teachers add column if not exists status text not null default 'active'  check (status in ('active','disabled'));
 
--- Single-use, expiring teacher invitations. Only a SHA-256 hash of the token is stored.
+-- Single-use teacher invitations. New codes have expires_at NULL; legacy rows may expire.
+-- Only a SHA-256 hash of the token is stored.
 create table if not exists teacher_invitations (
   invite_id   bigint generated always as identity primary key,
   token_hash  text   not null unique,
@@ -15,7 +16,7 @@ create table if not exists teacher_invitations (
   note        text,
   created_by  bigint references teachers(teacher_id) on delete set null,
   created_at  timestamptz not null default now(),
-  expires_at  timestamptz not null,
+  expires_at  timestamptz,
   used_at     timestamptz,
   used_by     bigint references teachers(teacher_id) on delete set null
 );

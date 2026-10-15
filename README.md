@@ -65,8 +65,9 @@ Use HTTPS (camera and microphone access require it in browsers). Not verified on
 ## Recognition integrity, marks and migrations (stage 2)
 
 **Run migrations in order in the Supabase SQL editor** (additive, non-destructive; compare with your DB first):
-`supabase/schema.sql` -> `supabase/migrations/002_attendance_integrity.sql` -> `supabase/migrations/003_marks.sql`.
-The app still saves attendance on a database without 002 (legacy columns), but audited corrections and marks need 002/003.
+`supabase/schema.sql` -> migrations `002` through `007` in order. Migration 007 preserves student names and attendance
+history when a student is unenrolled or deleted. The app still saves attendance on a database without 002 (legacy columns),
+but audited corrections, marks, and durable student history need their migrations.
 
 **How a face is decided:** detect -> embed -> match. Each face is `matched`, `ambiguous`, `duplicate` or `unknown`; only
 `matched` is auto-present. Everything else is listed for the teacher in an editable review table. Detection and recognition

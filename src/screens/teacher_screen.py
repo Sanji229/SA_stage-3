@@ -266,11 +266,22 @@ def tab_records():
     view = detail if choice == "All subjects" else detail[detail["Subject"] == choice]
     st.dataframe(session_summary(view), hide_index=True, width="stretch")
 
+    st.subheader("Student attendance history")
+    history = view.assign(
+        When=view["when"].map(lambda d: d.isoformat() if d is not None else ""),
+        Attendance=view["Present"].map({True: "Present", False: "Absent"}),
+    )
+    st.dataframe(
+        history[["When", "Subject", "Subject Code", "Student", "Student status", "Attendance"]]
+        .sort_values("When", ascending=False),
+        hide_index=True, width="stretch",
+    )
+
     _corrections_panel(teacher_id, view)
 
     export = view.assign(Status=view["Present"].map({True: "Present", False: "Absent"}))
     export = export.assign(When=export["when"].map(lambda d: d.isoformat() if d is not None else ""))
-    csv = export[["When", "Subject", "Subject Code", "Student", "Status"]].sort_values("When", ascending=False).to_csv(index=False)
+    csv = export[["When", "Subject", "Subject Code", "Student", "Student status", "Status"]].sort_values("When", ascending=False).to_csv(index=False)
     st.download_button("Download detailed CSV", csv, file_name="attendance.csv", mime="text/csv", icon=":material/download:")
 
 
@@ -284,6 +295,10 @@ def _corrections_panel(teacher_id, view):
         labels = {r.session: f"{r.Subject} · {r.session}" for r in sessions.itertuples()}
         ts = st.selectbox("Session", list(labels), format_func=labels.get, key="corr_session")
         rows = view[view["session"] == ts].sort_values("Student")
+        rows = rows[(rows["Student status"] == "Active") & rows["student_id"].notna()]
+        if rows.empty:
+            st.info("Only deleted or unenrolled students are in this session; their history is read-only.")
+            return
         sid_by_name = {r["Student"]: r for _, r in rows.iterrows()}
         who = st.selectbox("Student", list(sid_by_name), key="corr_student")
         current = bool(sid_by_name[who]["Present"])
@@ -352,7 +367,7 @@ def teacher_screen_login():
 
 def teacher_screen_register():
     _auth_header("teacher_back_register")
-    page_header("Teacher sign-up (invitation only)", "Ask an administrator for an invitation code. Each code works once and expires.")
+    page_header("Teacher sign-up (invitation only)", "Ask an administrator for an invitation code. Each code works once and stays valid until used or revoked.")
     with st.form("teacher_register"):
         token = st.text_input("Invitation code", max_chars=100, autocomplete="off")
         username = st.text_input("Username", placeholder="ananyaroy", autocomplete="username")

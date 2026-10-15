@@ -21,5 +21,5 @@ where n.nspname = 'public' and p.prosecdef;
 -- 6. At least one active administrator exists. EXPECT: >= 1 after setup.
 select count(*) as active_admins from teachers where role = 'admin' and status = 'active';
 
--- 7. Open (unused, unexpired) invitations. EXPECT: only ones you issued.
-select invite_id, role, note, created_at, expires_at from teacher_invitations where used_at is null and expires_at > now();
+-- 7. Open (unused, unrevoked) invitations. EXPECT: only ones you issued.
+select invite_id, role, note, created_at from teacher_invitations where used_at is null;

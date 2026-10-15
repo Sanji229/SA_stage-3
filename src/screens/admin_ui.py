@@ -6,22 +6,20 @@ import streamlit as st
 
 from src.database import db
 from src.database.db import DatabaseError
-from src.settings import INVITE_MAX_DAYS
 from src.ui.base_layout import empty_state, page_header
 
 
 def admin_tab(admin_id: int) -> None:
-    page_header("Administration", "Invite teachers and manage access. Invitations are single-use and expire.")
+    page_header("Administration", "Invite teachers and manage access. Invitation codes stay valid until used or revoked.")
 
     st.subheader("Invite a teacher")
     with st.form("create_invite"):
-        c1, c2, c3 = st.columns([2, 1, 1])
+        c1, c2 = st.columns([2, 1])
         note = c1.text_input("Note (who is this for?)", max_chars=100, placeholder="e.g. Dr. Rao, Physics")
-        days = c2.number_input("Valid for (days)", 1, INVITE_MAX_DAYS, 3)
-        role = c3.selectbox("Role", ["teacher", "admin"])
+        role = c2.selectbox("Role", ["teacher", "admin"])
         if st.form_submit_button("Create invitation", type="primary"):
             try:
-                token = db.create_invitation(admin_id, role, int(days), note)
+                token = db.create_invitation(admin_id, role, note=note)
             except DatabaseError as exc:
                 st.error(str(exc))
             else:
@@ -43,10 +41,10 @@ def admin_tab(admin_id: int) -> None:
 
     st.subheader("Invitations")
     if invites:
-        st.dataframe(pd.DataFrame(invites)[["note", "role", "status", "created_at", "expires_at"]], hide_index=True, width="stretch")
+        st.dataframe(pd.DataFrame(invites)[["note", "role", "status", "created_at"]], hide_index=True, width="stretch")
         open_ones = {i["invite_id"]: i for i in invites if i["status"] == "open"}
         if open_ones:
-            pick = st.selectbox("Revoke an open invitation", list(open_ones), format_func=lambda i: f"{open_ones[i]['note'] or 'no note'} · {open_ones[i]['role']} · expires {open_ones[i]['expires_at']}")
+            pick = st.selectbox("Revoke an open invitation", list(open_ones), format_func=lambda i: f"{open_ones[i]['note'] or 'no note'} · {open_ones[i]['role']}")
             if st.button("Revoke"):
                 try:
                     db.revoke_invitation(admin_id, pick)

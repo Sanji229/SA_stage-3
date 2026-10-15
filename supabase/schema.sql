@@ -38,7 +38,9 @@ create table if not exists subject_students (
 
 create table if not exists attendance_logs (
   log_id      bigint generated always as identity primary key,
-  student_id  bigint not null references students(student_id) on delete cascade,
+  student_id  bigint references students(student_id) on delete set null,
+  student_name text not null,              -- snapshot retained if the student is deleted
+  student_status text not null default 'active' check (student_status in ('active','unenrolled','deleted')),
   subject_id  bigint not null references subjects(subject_id) on delete cascade,
   "timestamp" timestamptz not null,          -- one value per attendance session
   is_present  boolean not null,

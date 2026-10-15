@@ -228,38 +228,36 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256((token or "").strip().encode()).hexdigest()
 
 
-def create_invitation(admin_id: int, role: str = "teacher", days: int = 3, note: str = "") -> str:
+def create_invitation(admin_id: int, role: str = "teacher", days: int | None = None, note: str = "") -> str:
     """Admin only. Returns the one-time token (shown once; only its hash is stored)."""
     require_admin(admin_id)
     if role not in ("teacher", "admin"):
         raise InvalidInput("Invalid role.")
-    if not (1 <= int(days) <= cfg.INVITE_MAX_DAYS):
-        raise InvalidInput(f"Invitations must expire within 1-{cfg.INVITE_MAX_DAYS} days.")
+    # `days` remains accepted for compatibility with older callers; new codes do not expire.
     token = secrets.token_urlsafe(24)
     _run(_t("teacher_invitations").insert({
         "token_hash": _token_hash(token), "role": role, "note": " ".join(str(note or "").split())[:100],
-        "created_by": admin_id, "expires_at": _iso(_now() + timedelta(days=int(days))),
+        "created_by": admin_id, "expires_at": None,
     }), "create the invitation")
     return token
 
 
 def list_invitations(admin_id: int) -> list[dict]:
     require_admin(admin_id)
-    rows = _run(_t("teacher_invitations").select("invite_id, role, note, created_at, expires_at, used_at"), "load invitations")
-    now = _iso(_now())
+    rows = _run(_t("teacher_invitations").select("invite_id, role, note, created_at, used_at"), "load invitations")
     for r in rows:  # the token hash is never returned to the UI
-        r["status"] = "used" if r.get("used_at") else ("expired" if str(r["expires_at"]) <= now else "open")
+        r["status"] = "used" if r.get("used_at") else "open"
     return rows
 
 
 def revoke_invitation(admin_id: int, invite_id: int) -> bool:
     require_admin(admin_id)
-    rows = _run(_t("teacher_invitations").update({"expires_at": _iso(_now() - timedelta(seconds=1))}).eq("invite_id", invite_id).is_("used_at", "null"), "revoke the invitation")
+    rows = _run(_t("teacher_invitations").delete().eq("invite_id", invite_id).is_("used_at", "null"), "revoke the invitation")
     return bool(rows)
 
 
 def register_teacher_with_invite(username: str, name: str, password: str, confirm: str, token: str) -> dict:
-    """The ONLY public path to a teacher account: a valid, unexpired, single-use invitation."""
+    """The ONLY public path to a teacher account: a valid, single-use invitation."""
     err = validate_registration(username, name, password, confirm)
     if err:
         raise InvalidInput(err)
@@ -267,7 +265,7 @@ def register_teacher_with_invite(username: str, name: str, password: str, confir
     check_throttle("teacher_register", "global", 10, 60)
     h = _token_hash(token)
     now = _now()
-    bad = PermissionDenied("This invitation is invalid, already used, or has expired.")
+    bad = PermissionDenied("This invitation is invalid, already used, or revoked.")
     if len((token or "").strip()) < 20:
         record_attempt("teacher_register", "global", False)
         raise bad
@@ -279,7 +277,8 @@ def register_teacher_with_invite(username: str, name: str, password: str, confir
         raise DuplicateError("That username is already taken.")
     # Atomic claim: only one concurrent request can flip used_at from NULL.
     claimed = _run(
-        _t("teacher_invitations").update({"used_at": _iso(now)}).eq("token_hash", h).is_("used_at", "null").gt("expires_at", _iso(now)),
+        _t("teacher_invitations").update({"used_at": _iso(now)}).eq("token_hash", h)
+        .is_("used_at", "null"),
         "use the invitation",
     )
     if not claimed:
@@ -546,6 +545,12 @@ def enroll_student_to_subject(student_id: int, subject_id: int) -> bool:
 
 
 def unenroll_student_to_subject(student_id: int, subject_id: int):
+    # Preserve historical attendance, but mark rows from this enrollment period.
+    _run(
+        _t("attendance_logs").update({"student_status": "unenrolled"})
+        .eq("student_id", student_id).eq("subject_id", subject_id).eq("student_status", "active"),
+        "update attendance history",
+    )
     return _run(
         _t("subject_students").delete().eq("student_id", student_id).eq("subject_id", subject_id), "unenroll"
     )
@@ -626,7 +631,9 @@ def save_attendance_session(logs: Iterable[dict], teacher_id: int) -> int:
     if len(set(ids)) != len(ids):
         raise DatabaseError("A student appears more than once in this session.")
     assert_teacher_owns_subject(teacher_id, subject_id)      # mandatory: authorisation is never optional
-    enrolled = {s["student_id"] for s in _enrolled_students(subject_id)}
+    enrolled_rows = _enrolled_students(subject_id)
+    enrolled = {s["student_id"] for s in enrolled_rows}
+    names = {s["student_id"]: s["name"] for s in enrolled_rows}
     outsiders = set(ids) - enrolled
     if outsiders:
         raise DatabaseError("Some students are not enrolled in this subject; refresh the page and try again.")
@@ -638,6 +645,8 @@ def save_attendance_session(logs: Iterable[dict], teacher_id: int) -> int:
         return 0
     for l in logs:
         l.setdefault("marked_by", teacher_id)
+        l["student_name"] = names[l["student_id"]]
+        l.setdefault("student_status", "active")
     try:
         return len(_run(_t("attendance_logs").insert(logs), "save attendance"))
     except DuplicateError:
@@ -645,8 +654,10 @@ def save_attendance_session(logs: Iterable[dict], teacher_id: int) -> int:
     except DatabaseError as exc:
         if not isinstance(exc.__cause__, Exception) or not _is_missing_column(exc.__cause__):
             raise
-        log.warning("attendance_logs lacks migration-002 columns; saving legacy columns only")
-        legacy = [{k: v for k, v in l.items() if k not in _EXTENDED_COLS} for l in logs]
+        # Keep the legacy fallback for installations missing migration 002 or 007.
+        log.warning("attendance_logs lacks optional history or provenance columns; saving legacy columns only")
+        optional_cols = (*_EXTENDED_COLS, "student_name", "student_status")
+        legacy = [{k: v for k, v in l.items() if k not in optional_cols} for l in logs]
         try:
             return len(_run(_t("attendance_logs").insert(legacy), "save attendance"))
         except DuplicateError:
@@ -714,7 +725,7 @@ def get_attendance_for_teacher(teacher_id: int) -> list[dict]:
             "load attendance records",
         )
     except DatabaseError:
-        # Fallback for databases without the attendance_logs -> students foreign key.
+        # Fallback for databases without attendance_logs relations.
         return _run(
             _t("attendance_logs").select("*, subjects!inner(*)").eq("subjects.teacher_id", teacher_id),
             "load attendance records",
