@@ -13,6 +13,8 @@
     #download { display: inline-block; margin-top: 8px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; color: #0f172a; text-decoration: none; }
     #download[hidden] { display: none; }
     #status { min-height: 22px; margin: 8px 0; color: #475569; }
+    #recording-time { margin: 8px 0; color: #b42318; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #recording-time[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -21,6 +23,7 @@
     <button id="save" class="primary">Create account</button>
     <button id="clear">Clear sample</button>
   </div>
+  <div id="recording-time" role="timer" aria-live="off" hidden>Recording time: 00:00</div>
   <div id="status" role="status">Record a clear voice sample. The action button stops and submits it automatically.</div>
   <audio id="preview" controls hidden></audio>
   <a id="download" hidden download="voice_sample.wav">Download recording</a>
@@ -29,6 +32,7 @@
     const saveButton = document.getElementById("save");
     const clearButton = document.getElementById("clear");
     const status = document.getElementById("status");
+    const recordingTime = document.getElementById("recording-time");
     const preview = document.getElementById("preview");
     const download = document.getElementById("download");
     let stream = null;
@@ -39,6 +43,8 @@
     let submitAfterStop = false;
     let discardAfterStop = false;
     let maxRecordingTimer = null;
+    let recordingClockInterval = null;
+    let recordingStartedAt = 0;
     let maxDurationReached = false;
     let actionLabel = "Create account";
 
@@ -47,6 +53,12 @@
     }
     function setHeight() {
       post("streamlit:setFrameHeight", {height: document.body.scrollHeight});
+    }
+    function updateRecordingTime() {
+      const seconds = Math.floor((Date.now() - recordingStartedAt) / 1000);
+      const minutesText = String(Math.floor(seconds / 60)).padStart(2, "0");
+      const secondsText = String(seconds % 60).padStart(2, "0");
+      recordingTime.textContent = `Recording time: ${minutesText}:${secondsText}`;
     }
     function bytesToBase64(bytes) {
       let binary = "";
@@ -86,11 +98,16 @@
     async function finishRecording() {
       if (maxRecordingTimer) clearTimeout(maxRecordingTimer);
       maxRecordingTimer = null;
+      if (recordingClockInterval) clearInterval(recordingClockInterval);
+      recordingClockInterval = null;
+      if (recordingStartedAt) updateRecordingTime();
       if (discardAfterStop) {
         discardAfterStop = false;
         chunks = [];
         wavBytes = null;
         preview.hidden = true;
+        recordingTime.hidden = true;
+        recordingStartedAt = 0;
         status.textContent = "Sample cleared. Record a clear voice sample.";
       } else {
         try {
@@ -123,10 +140,16 @@
         chunks = [];
         wavBytes = null;
         maxDurationReached = false;
+        recordingStartedAt = 0;
+        recordingTime.hidden = true;
         preview.hidden = true;
         recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
         recorder.onstop = finishRecording;
         recorder.start();
+        recordingStartedAt = Date.now();
+        recordingTime.hidden = false;
+        updateRecordingTime();
+        recordingClockInterval = setInterval(updateRecordingTime, 1000);
         maxRecordingTimer = setTimeout(() => {
           if (recorder && recorder.state === "recording") {
             maxDurationReached = true;
@@ -182,6 +205,10 @@
       submitAfterStop = false;
       chunks = [];
       wavBytes = null;
+      if (recordingClockInterval) clearInterval(recordingClockInterval);
+      recordingClockInterval = null;
+      recordingStartedAt = 0;
+      recordingTime.hidden = true;
       preview.removeAttribute("src");
       preview.hidden = true;
       download.hidden = true;
