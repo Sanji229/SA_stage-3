@@ -38,6 +38,8 @@
     let requestId = 0;
     let submitAfterStop = false;
     let discardAfterStop = false;
+    let maxRecordingTimer = null;
+    let maxDurationReached = false;
     let actionLabel = "Create account";
 
     function post(type, value) {
@@ -82,6 +84,8 @@
       return new Uint8Array(buffer);
     }
     async function finishRecording() {
+      if (maxRecordingTimer) clearTimeout(maxRecordingTimer);
+      maxRecordingTimer = null;
       if (discardAfterStop) {
         discardAfterStop = false;
         chunks = [];
@@ -96,7 +100,7 @@
           preview.hidden = false;
           download.href = preview.src;
           download.hidden = false;
-          status.textContent = "Sample ready.";
+          status.textContent = maxDurationReached ? "Maximum 10-minute recording ready." : "Sample ready.";
           saveButton.disabled = false;
           if (submitAfterStop) submitSample();
         } catch (error) {
@@ -118,10 +122,18 @@
         recorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined);
         chunks = [];
         wavBytes = null;
+        maxDurationReached = false;
         preview.hidden = true;
         recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
         recorder.onstop = finishRecording;
         recorder.start();
+        maxRecordingTimer = setTimeout(() => {
+          if (recorder && recorder.state === "recording") {
+            maxDurationReached = true;
+            status.textContent = "Maximum 10 minutes reached. Preparing recording…";
+            recorder.stop();
+          }
+        }, 600000);
         recordButton.textContent = "Stop recording";
         status.textContent = "Recording… Click Create account to stop and save this sample.";
       } catch (error) {

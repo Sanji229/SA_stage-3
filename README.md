@@ -31,8 +31,11 @@ policies; the app uses a **server-side key** and enforces authorisation in `src/
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_KEY` | Required. Server-side only; never commit or expose. |
 | `APP_BASE_URL` | Public app URL for join links/QR (optional). |
-| `FACE_MATCH_THRESHOLD` | Max face distance for a match (default 0.6; lower = stricter). |
-| `VOICE_MATCH_THRESHOLD` | Min cosine similarity for a voice match (default 0.55). |
+| `FACE_MATCH_THRESHOLD` | Max face distance for a match (default 0.45; finite range 0–1; lower = stricter). |
+| `VOICE_MATCH_THRESHOLD` | Min cosine similarity for a voice match (default 0.55; finite range 0–1). |
+| `FACE_MATCH_MARGIN`, `VOICE_MATCH_MARGIN` | Ambiguity margins (default 0.05; finite range 0–2). |
+| `FACE_NUM_JITTERS`, `FACE_MIN_SIZE_PX` | Face processing controls (defaults 0 and 40; ranges 0–100 and 1–2000). |
+| `SESSION_IDLE_TIMEOUT_MINUTES` | Idle sign-out timeout (default 30 minutes; range 1–1440). |
 
 Read from environment variables first, then `.streamlit/secrets.toml`.
 
@@ -65,13 +68,18 @@ Use HTTPS (camera and microphone access require it in browsers). Not verified on
 ## Recognition integrity, marks and migrations (stage 2)
 
 **Run migrations in order in the Supabase SQL editor** (additive, non-destructive; compare with your DB first):
-`supabase/schema.sql` -> migrations `002` through `007` in order. Migration 007 preserves student names and attendance
-history when a student is unenrolled or deleted. The app still saves attendance on a database without 002 (legacy columns),
+`supabase/schema.sql` -> migrations `002` through `009` in order. Migration 007 preserves student names and attendance
+history when a student is unenrolled or deleted; 008 makes attendance corrections and their audit entries atomic and
+retains correction audit rows after student deletion; 009 records biometric consent and keeps attendance, marks, and their audit history under the generic label “Former student” after profile deletion. The app still saves attendance on a database without 002 (legacy columns),
 but audited corrections, marks, and durable student history need their migrations.
+Student registration also requires migration 008 for its atomic attempt reservation and 009 for recorded consent / profile deletion; without 008, registration fails closed.
 
 **How a face is decided:** detect -> embed -> match. Each face is `matched`, `ambiguous`, `duplicate` or `unknown`; only
 `matched` is auto-present. Everything else is listed for the teacher in an editable review table. Detection and recognition
-do not prove physical presence.
+do not prove physical presence. Faces smaller than `FACE_MIN_SIZE_PX` are sent to teacher review and cannot be marked
+automatically. A signed-in student can replace their face template from the dashboard; duplicate templates are rejected.
+Uploaded images are validated then resized to a 2000-pixel maximum side before keeping them in session state. Audio
+component payloads are size-limited before decoding, and recordings are limited to 10 minutes.
 
 New settings: `FACE_MATCH_MARGIN`, `FACE_NUM_JITTERS`, `FACE_MIN_SIZE_PX`, `VOICE_MATCH_MARGIN` (see `src/settings.py`).
 
@@ -86,7 +94,7 @@ Full per-item status: `docs/STATUS.md`.
 ## Hardening update: accounts, validation, Supabase
 
 - **Teacher accounts are invitation-only.** There is no public teacher sign-up. See `docs/SECURITY.md` for the first-administrator procedure.
-- **Run migrations `004` then (after review) `005`** and `supabase/verify_security.sql`. The app refuses to start with a public Supabase key.
+- **Run migrations `002` through `009` in order**; review migration `005` carefully because it changes public API grants. Then run `supabase/verify_security.sql`. The app refuses to start with a public Supabase key.
 - **No classifier to retrain.** Face matching is a distance search over stored embeddings, cached per *gallery version*; a new enrolment is visible to every instance immediately. `FACE_MATCH_THRESHOLD`, `FACE_MATCH_MARGIN` are unchanged.
 - New optional settings: `ADMIN_SETUP_TOKEN`, `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_MINUTES`, `STUDENT_REGISTER_PER_HOUR`.
 - Breaking changes for scripts/tests: `db.get_enrolled_students(teacher_id, subject_id)` and `db.save_attendance_session(logs, teacher_id)` now require the acting teacher.

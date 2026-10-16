@@ -1,6 +1,3 @@
-import base64
-import binascii
-
 import streamlit as st
 
 from src.components.dialog_attendance_results import show_attendance_result
@@ -9,13 +6,14 @@ from src.database.db import DatabaseError, get_enrolled_students
 from src.pipelines.voice_pipeline import VoiceError, process_bulk_audio_detailed
 from src.settings import VOICE_MATCH_THRESHOLD
 from src.services.attendance import build_review_session, new_session_timestamp
+from src.validation import ValidationError, decode_audio_base64
 
 
 def _analyze_voice_sample(subject_id: int, capture: dict) -> None:
     try:
-        audio_bytes = base64.b64decode(capture.get("audio_base64", ""), validate=True)
-    except (binascii.Error, ValueError):
-        st.error("The recording could not be transferred. Please record again.")
+        audio_bytes = decode_audio_base64(capture.get("audio_base64", ""))
+    except ValidationError as exc:
+        st.error(str(exc))
         return
 
     try:

@@ -1,5 +1,5 @@
 import streamlit as st
-from src.validation import ValidationError, check_image_bytes
+from src.validation import ALLOWED_IMAGE_EXTENSIONS, ValidationError, check_image_bytes
 
 MAX_PHOTOS = 12
 
@@ -20,7 +20,12 @@ def add_photos_dialog():
                 return
             st.rerun()
     else:
-        files = st.file_uploader("Choose image files", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="dialog_upload")
+        files = st.file_uploader(
+            "Choose image files",
+            type=ALLOWED_IMAGE_EXTENSIONS,
+            accept_multiple_files=True,
+            key="dialog_upload",
+        )
         if files and st.button(f"Add {len(files)} photo(s)", type="primary"):
             bad = 0
             for f in files:

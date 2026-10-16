@@ -267,19 +267,38 @@ def tab_records():
     view = detail if choice == "All subjects" else detail[detail["Subject"] == choice]
     st.dataframe(session_summary(view), hide_index=True, width="stretch")
 
-    st.subheader("Student attendance history")
     history = view.assign(
-        When=view["when"].map(lambda d: d.isoformat() if d is not None else ""),
+        When=view["when"].map(_format_timestamp),
         Attendance=view["Present"].map({True: "Present", False: "Absent"}),
     )
-    _render_attendance_history(history.sort_values("When", ascending=False))
+    st.subheader("Student attendance history")
+    session_columns = ["session", "Subject", "Subject Code"]
+    for (session, subject, code), rows in history.groupby(session_columns, sort=False, dropna=False):
+        when = _format_timestamp(session) or "Unknown date"
+        absent_count = int((rows["Attendance"] == "Absent").sum())
+        label = f"{when} · {subject} ({code}) · {len(rows)} students · {absent_count} absent"
+        with st.expander(label, expanded=False):
+            _render_attendance_history(rows.sort_values("When", ascending=False))
 
     _corrections_panel(teacher_id, view)
 
     export = view.assign(Status=view["Present"].map({True: "Present", False: "Absent"}))
-    export = export.assign(When=export["when"].map(lambda d: d.isoformat() if d is not None else ""))
+    export = export.assign(When=export["when"].map(_format_timestamp))
     csv = export[["When", "Subject", "Subject Code", "Student", "Student status", "Status"]].sort_values("When", ascending=False).to_csv(index=False)
     st.download_button("Download detailed CSV", csv, file_name="attendance.csv", mime="text/csv", icon=":material/download:")
+
+
+def _format_timestamp(value) -> str:
+    """Format timestamps from PostgREST whether it returns parsed values or ISO strings."""
+    if value is None:
+        return ""
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        try:
+            return isoformat()
+        except (TypeError, ValueError):
+            pass
+    return str(value)
 
 
 def _render_attendance_history(history):
@@ -346,7 +365,7 @@ def _corrections_panel(teacher_id, view):
         if trail:
             st.caption("Audit trail for this subject")
             st.dataframe(
-                [{"When": t["changed_at"] if "changed_at" in t else "", "Student": (t.get("students") or {}).get("name", t["student_id"]),
+                [{"When": t["changed_at"] if "changed_at" in t else "", "Student": (t.get("students") or {}).get("name") or t.get("student_name") or t.get("student_id"),
                   "From": "Present" if t["old_present"] else "Absent", "To": "Present" if t["new_present"] else "Absent", "Reason": t["reason"]} for t in trail],
                 hide_index=True, width="stretch")
 

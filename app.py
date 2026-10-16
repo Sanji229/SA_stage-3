@@ -4,7 +4,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.database.config import ConfigError, get_supabase
+from src.config_errors import ConfigError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -20,7 +20,8 @@ def _config_error_screen(message: str) -> None:
     st.markdown(
         "1. Copy `.env.example` to `.env` **or** `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`.\n"
         "2. Fill in `SUPABASE_URL` and `SUPABASE_KEY` (server-side key; never commit it).\n"
-        "3. Run `supabase/schema.sql` in your Supabase SQL editor, then restart the app."
+        "3. Check any named setting against the allowed ranges in `src/settings.py`.\n"
+        "4. Run `supabase/schema.sql` in your Supabase SQL editor, then restart the app."
     )
 
 
@@ -45,12 +46,20 @@ def main() -> None:
     st.session_state.setdefault("login_type", None)
 
     try:
+        from src.database.config import get_supabase
+
         get_supabase()
     except ConfigError as exc:
         _config_error_screen(str(exc))
         return
 
+    from src.session_security import expire_idle_session
+
+    if expire_idle_session():
+        st.session_state._session_expired_notice = True
     _apply_portal_param()
+    if st.session_state.pop("_session_expired_notice", False):
+        st.warning("Your session expired after inactivity. Please sign in again.")
 
     # Imported here so a missing-config page never needs the ML stack.
     from src.components.dialog_auto_enroll import auto_enroll_dialog

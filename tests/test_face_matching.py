@@ -69,7 +69,7 @@ def test_duplicate_claim_goes_to_review():
 def test_small_face_flag_and_empty_inputs():
     base, ids, mat = gallery()
     f = match_encodings([nudge(base[1], 0.1)], ids, mat, bboxes=[(0, 0, 20, 20)]).faces[0]
-    assert "small_face" in f.flags and f.status == MATCHED
+    assert "small_face" in f.flags and f.status == AMBIGUOUS and f.candidates == [2]
     assert match_encodings([], ids, mat).num_faces == 0
     e_ids, e_mat = build_gallery([])
     assert match_encodings([vec()], e_ids, e_mat).faces[0].status == UNKNOWN

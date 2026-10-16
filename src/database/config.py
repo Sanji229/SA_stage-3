@@ -17,12 +17,9 @@ import logging
 import streamlit as st
 
 from src.settings import get_setting
+from src.config_errors import ConfigError
 
 log = logging.getLogger("smartattend.db")
-
-
-class ConfigError(RuntimeError):
-    """Raised when required configuration is missing."""
 
 
 _client_override = None  # used by tests only

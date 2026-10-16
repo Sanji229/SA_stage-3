@@ -11,9 +11,9 @@ Legend: **V** fixed and verified (automated tests and/or browser run in a sandbo
 | Threshold *validated* on labelled data | **N** | No real labelled multi-session data exists. `class_data/` is synthetic with near-identical faces (median nearest-other-identity distance 0.22), so it cannot tune a threshold. Framework ready: `scripts/evaluate_faces.py` |
 | Margin (0.05 face / 0.05 voice) | R | Provisional defaults, untuned |
 | Evaluation framework (identity-split FAR/FRR/precision/recall/coverage) | V | `evaluation/`, 6 tests; run on synthetic set (see README) |
-| Group photo: per-face bbox/status, small-face flag, duplicate claims | V (logic, 2 real photos) · R | `test_face_real.py`, `test_face_matching.py` |
-| Large-image performance | P | Images capped to 2000px; ~0.13 s/image measured on 424-px tiles only. No classroom-size profiling |
-| Embedding cache invalidation | P | 30 s TTL + `clear_gallery_cache()` after registration. No biometric delete/re-enrol UI yet |
+| Group photo: per-face bbox/status, small-face flag, duplicate claims | V (logic, 2 real photos) · R | Small faces now require teacher review instead of automatic attendance; see `face_pipeline.py` |
+| Large-image performance | P | Uploads are downscaled to 2000px before storing/processing, reducing session memory; ~0.13 s/image was measured only on 424-px tiles, so classroom-size profiling remains |
+| Embedding cache invalidation | P | 30 s TTL + gallery version and `clear_gallery_cache()` after registration, face re-enrolment, and profile deletion; re-enrolment is available to the signed-in student |
 | Voice audio quality validation (empty/short/silent/clipped/noisy) | V | `test_voice_logic.py` (numpy only) |
 | Voice ambiguity / unknown handling | V (logic) | embeddings are synthetic vectors in tests |
 | Voice model accuracy, thresholds, VAD tuning | **N** | PyTorch/Resemblyzer could not be installed in the sandbox; no labelled recordings. **WebRTC VAD is not in this repo** (silence splitting uses `librosa.effects.split`) |
@@ -22,7 +22,7 @@ Legend: **V** fixed and verified (automated tests and/or browser run in a sandbo
 | Duplicate attendance prevented (app + DB unique) | V (app) · R (real DB) | `test_attendance_integrity.py`; migration 002 unique index |
 | Server-side ownership / enrolment checks | V | same tests |
 | Review table, manual vs auto vs corrected provenance | V | tests + browser |
-| Audited corrections | V (app) · R (real DB) | requires migration 002 |
+| Audited corrections | P (app path updated; migration not applied/verified here) | migration 008 performs the attendance update and audit insert in one locked database transaction |
 | Marks: assessments, CSV validation, atomic import, publish, student view | V (app, fake DB, browser) · R (real DB triggers) | `test_marks.py`; SQL triggers in migration 003 are **not executed** anywhere here |
 | Marks match by institutional email | **N** | `students` has no email column; needs your decision (see below) |
 | RLS | P | Enabled with no policies (server key only). Per-user policies need Supabase Auth: decision required |
@@ -30,7 +30,7 @@ Legend: **V** fixed and verified (automated tests and/or browser run in a sandbo
 | Teacher dashboard: totals, sessions, trend, by-subject, at-risk | V | tests + browser. "Today's %", announcements, upcoming assessments: **N** |
 | Student dashboard: attendance, marks, warnings | V | tests. Exam info/announcements: **N** |
 | Timetable, announcements/notifications, bulk import UI, QR attendance | **N** | Deferred to keep this change reviewable |
-| Biometric consent / deletion / retention workflow | **N** | Next priority after this change |
+| Biometric consent / deletion / retention workflow | P (implemented; migration 009 not applied or validated against Supabase) | Registration records consent version/time; student deletion removes biometric profile and enrollment, while attendance, marks, and audit rows remain with the identity label “Former student” |
 | Concurrency under real load | **N** | Only the DB unique index guards races; not load-tested |
 
 
@@ -46,6 +46,8 @@ Legend: **V** fixed and verified (automated tests and/or browser run in a sandbo
 | Public teacher/admin self-grant removed; invitations; first-admin setup | V (fake DB, browser) · R (real DB) | `test_account_security.py`, browser run |
 | Rate limiting (login, invitation guessing, setup, registration) | V (fake DB) · R | same; per-user not per-IP |
 | Key-type guard, RLS/grant migrations, verification SQL | V (static checks) · **R**: SQL and `check_supabase_security.py` never run against a real project | `test_supabase_policy.py` |
+| Recognition setting validation | P (implemented; not exercised in this review) | `src/settings.py`, `src/pipelines/face_pipeline.py`, `src/pipelines/voice_pipeline.py` |
+| Student-ID checks on student-facing database methods | P (bound to active Streamlit session; not exercised in this review) | `src/database/db.py:_require_student_session` |
 | Authorisation matrix (wrong teacher, disabled, forged ids, students) | V | same |
 | Authorisation gap found and fixed: `save_attendance_session` skipped the check without `teacher_id`; class-list readers had no owner check | V | same |
-| Session expiry / liveness / per-IP limits | **N** | see docs/SECURITY.md |
+| Session expiry / liveness / per-IP limits | P (configurable inactivity expiry implemented; liveness and per-IP controls remain N) | see docs/SECURITY.md |

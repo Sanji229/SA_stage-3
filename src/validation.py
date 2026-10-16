@@ -6,11 +6,13 @@ the UI never skips validation.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 import re
 import unicodedata
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 class ValidationError(ValueError):
@@ -19,8 +21,17 @@ class ValidationError(ValueError):
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
+MAX_IMAGE_SIDE = 2000
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
-ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG"}
+MAX_AUDIO_SECONDS = 600
+# Common raster formats that Pillow can decode reliably in this app. Keep this
+# list aligned with the uploader's accepted extensions below.
+ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "ICO", "AVIF", "JPEG2000", "PPM", "TGA"}
+ALLOWED_IMAGE_EXTENSIONS = sorted(
+    extension.lstrip(".").lower()
+    for extension, image_format in Image.registered_extensions().items()
+    if image_format in ALLOWED_IMAGE_FORMATS
+)
 
 _NAME_ALLOWED = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .'\u2019-])*$", re.UNICODE)
 _CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,19}$")
@@ -89,7 +100,7 @@ def clean_reason(reason, minimum: int = 3, maximum: int = 500) -> str:
 
 
 def check_image_bytes(raw: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> Image.Image:
-    """Validate an uploaded image by CONTENT (not file name) and return a decoded copy."""
+    """Validate image content and return an upright, normalized RGB copy."""
     if not raw:
         raise ValidationError("The image file is empty.")
     if len(raw) > max_bytes:
@@ -99,13 +110,33 @@ def check_image_bytes(raw: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> Image.Ima
         fmt = probe.format
         w, h = probe.size
         if fmt not in ALLOWED_IMAGE_FORMATS:
-            raise ValidationError("Only JPEG and PNG images are supported.")
+            raise ValidationError("This image format is not supported. Use a common raster image such as JPEG, PNG, WebP, BMP, TIFF or GIF.")
         if w * h > MAX_IMAGE_PIXELS:
             raise ValidationError("The image resolution is too large.")
         probe.verify()
         img = Image.open(io.BytesIO(raw))
+        # Multi-frame files use their first frame for a single attendance image.
+        if getattr(img, "is_animated", False):
+            img.seek(0)
+        if max(img.size) > MAX_IMAGE_SIDE:
+            # Pillow can decode some formats directly at thumbnail scale, reducing
+            # peak memory for large phone photos before RGB conversion.
+            resampling = getattr(Image, "Resampling", Image)
+            img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE), resampling.LANCZOS)
+        img = ImageOps.exif_transpose(img)
         img.load()
-        return img
+        # Composite transparency on white before converting to RGB so transparent
+        # PNG/WebP pixels do not become black and obscure the face.
+        if "A" in img.getbands():
+            rgba = img.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, "white")
+            background.alpha_composite(rgba)
+            img = background.convert("RGB")
+        else:
+            img = img.convert("RGB")
+        # Keep classroom photos small in Streamlit session state. The face pipeline
+        # already analyzed at this same maximum size, so this avoids redundant memory use.
+        return img.copy()
     except ValidationError:
         raise
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, SyntaxError):
@@ -118,3 +149,17 @@ def check_audio_bytes(raw: bytes, max_bytes: int = MAX_AUDIO_BYTES) -> bytes:
     if len(raw) > max_bytes:
         raise ValidationError(f"The recording is larger than {max_bytes // (1024 * 1024)} MB.")
     return raw
+
+
+def decode_audio_base64(encoded: str, max_bytes: int = MAX_AUDIO_BYTES) -> bytes:
+    """Bound custom-component payload size before base64 allocates decoded audio."""
+    if not isinstance(encoded, str) or not encoded:
+        raise ValidationError("The audio recording is empty.")
+    max_encoded = 4 * ((max_bytes + 2) // 3)
+    if len(encoded) > max_encoded:
+        raise ValidationError(f"The recording is larger than {max_bytes // (1024 * 1024)} MB.")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValidationError("The recording could not be transferred. Please record again.") from None
+    return check_audio_bytes(decoded, max_bytes)

@@ -133,7 +133,7 @@ def _export_and_audit(teacher_id, aid, a):
     if trail:
         names = {r["student_id"]: r["name"] for r in rows}
         st.caption("Change history")
-        st.dataframe([{"When": t.get("changed_at", ""), "Student": names.get(t["student_id"], t["student_id"]), "Action": t["action"],
+        st.dataframe([{"When": t.get("changed_at", ""), "Student": names.get(t.get("student_id"), t.get("student_name") or "Former student"), "Action": t["action"],
                        "From": t.get("old_obtained"), "To": t.get("new_obtained")} for t in trail], hide_index=True, width="stretch")
     else:
         st.caption("Change history appears here (requires migration 003 triggers).")

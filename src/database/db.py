@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import bcrypt
+import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from src import settings as cfg
 from src.database.config import ConfigError, get_supabase
@@ -27,6 +29,7 @@ log = logging.getLogger("smartattend.db")
 
 MAX_PASSWORD_BYTES = 72  # bcrypt silently truncates beyond this
 MIN_PASSWORD_LEN = 8
+BIOMETRIC_CONSENT_VERSION = "v1"
 
 
 class DatabaseError(RuntimeError):
@@ -39,6 +42,27 @@ class InvalidInput(DatabaseError):
 
 class RateLimited(DatabaseError):
     """Too many attempts; try again later."""
+
+
+def _require_student_session(student_id: int) -> None:
+    """Bind student-facing database operations to the identity in this Streamlit session.
+
+    Calls made outside a Streamlit script context are trusted operator/test code; web requests
+    must have a matching face-authenticated student session.
+    """
+    if get_script_run_ctx(suppress_warning=True) is None:
+        return
+    student = st.session_state.get("student_data")
+    session_student_id = student.get("student_id") if isinstance(student, dict) else None
+    if (
+        isinstance(student_id, bool)
+        or not isinstance(student_id, int)
+        or isinstance(session_student_id, bool)
+        or not isinstance(session_student_id, int)
+        or session_student_id != student_id
+        or st.session_state.get("user_role") != "student"
+    ):
+        raise PermissionDenied("Sign in as this student to access their records.")
 
 
 def _valid(fn: Callable, *args, **kwargs):
@@ -82,6 +106,16 @@ def _t(name: str):
     except Exception as exc:  # noqa: BLE001 - never leak client internals to the UI
         log.exception("Could not open table %s", name)
         raise DatabaseError("The database is currently unavailable. Please try again.") from exc
+
+
+def _rpc(name: str, params: dict, action: str):
+    try:
+        return get_supabase().rpc(name, params).execute().data
+    except ConfigError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - convert client errors to a user-safe message
+        log.exception("Database RPC %s failed", name)
+        raise DatabaseError(f"Could not {action}. Please try again.") from exc
 
 
 # --------------------------------------------------------------------- passwords
@@ -134,7 +168,7 @@ def _iso(dt: datetime) -> str:
 
 
 # ------------------------------------------------------------------ abuse protection
-def check_throttle(kind: str, key: str, max_events: int, window_minutes: int, count_success: bool = False, now: datetime | None = None) -> None:
+def check_throttle(kind: str, key: str, max_events: int, window_minutes: int, count_success: bool | None = False, now: datetime | None = None) -> None:
     """Raise RateLimited if `max_events` matching attempts happened inside the window.
 
     Stored in the database (auth_attempts) so it holds across Streamlit sessions and server
@@ -143,10 +177,10 @@ def check_throttle(kind: str, key: str, max_events: int, window_minutes: int, co
     """
     since = _iso((now or _now()) - timedelta(minutes=window_minutes))
     try:
-        rows = _run(
-            _t("auth_attempts").select("attempted_at").eq("kind", kind).eq("key", key).eq("success", count_success).gt("attempted_at", since),
-            "check rate limits",
-        )
+        query = _t("auth_attempts").select("attempted_at").eq("kind", kind).eq("key", key)
+        if count_success is not None:
+            query = query.eq("success", count_success)
+        rows = _run(query.gt("attempted_at", since), "check rate limits")
     except DatabaseError:
         log.warning("auth_attempts table unavailable; rate limiting disabled (apply migration 004)")
         return
@@ -428,6 +462,7 @@ def get_student(student_id: int) -> Optional[dict]:
 
 def update_student_voice_embedding(student_id: int, voice_embedding) -> None:
     """Save a student's voice profile after validating its shape and values."""
+    _require_student_session(student_id)
     try:
         voice = biometrics.clean_embedding(voice_embedding, biometrics.VOICE_DIM, "Voice")
     except ValueError as exc:
@@ -438,7 +473,42 @@ def update_student_voice_embedding(student_id: int, voice_embedding) -> None:
     )
 
 
-def create_student(new_name: str, face_embedding=None, voice_embedding=None):
+def update_student_face_embedding(student_id: int, face_embedding) -> None:
+    """Replace the signed-in student's face template after server-side validation."""
+    _require_student_session(student_id)
+    try:
+        face = biometrics.clean_embedding(face_embedding, biometrics.FACE_DIM, "Face")
+    except ValueError as exc:
+        raise InvalidInput(f"Face enrolment failed: {exc}") from None
+    if biometrics.find_face_conflicts(face, get_face_gallery(), cfg.FACE_MATCH_THRESHOLD, exclude_id=int(student_id)):
+        raise DuplicateError("This face is already linked to another student. Please use a clearer photo or ask your teacher for help.")
+    rows = _run(
+        _t("students").update({"face_embedding": face}).eq("student_id", int(student_id)).select("student_id"),
+        "replace your face profile",
+    )
+    if not rows:
+        raise DatabaseError("That student profile no longer exists.")
+
+
+def delete_student_profile(student_id: int) -> None:
+    """Delete a signed-in student's profile and biometrics; DB triggers anonymize retained records."""
+    _require_student_session(student_id)
+    try:
+        result = _rpc("delete_student_profile_anonymized", {"p_student_id": int(student_id)}, "delete your profile")
+    except DatabaseError as exc:
+        cause = exc.__cause__
+        if cause is not None and (
+            getattr(cause, "code", None) in ("PGRST202", "42883")
+            or "delete_student_profile_anonymized" in str(cause).lower()
+        ):
+            raise DatabaseError("Profile deletion requires supabase/migrations/009_biometric_consent_and_anonymized_deletion.sql.") from None
+        raise
+    if result is not True and result != [True]:
+        raise DatabaseError("That student profile does not exist.")
+
+
+def create_student(new_name: str, face_embedding=None, voice_embedding=None,
+                   biometric_consent_at: str | None = None, biometric_consent_version: str | None = None):
     """Create a student profile. All checks run here, whatever the caller (UI or script) did.
 
     * name is validated; a valid 128-d face embedding is REQUIRED (no half-registered profiles)
@@ -455,7 +525,11 @@ def create_student(new_name: str, face_embedding=None, voice_embedding=None):
                "otherwise ask your teacher to check the enrolment.")
     if biometrics.find_face_conflicts(face, get_face_gallery(), cfg.FACE_MATCH_THRESHOLD):
         raise DuplicateError(dup_msg)
-    rows = _run(_t("students").insert({"name": name, "face_embedding": face, "voice_embedding": voice}), "create the student profile")
+    payload = {"name": name, "face_embedding": face, "voice_embedding": voice}
+    if biometric_consent_at and biometric_consent_version:
+        payload.update({"biometric_consent_at": biometric_consent_at,
+                        "biometric_consent_version": biometric_consent_version})
+    rows = _run(_t("students").insert(payload), "create the student profile")
     new_id = rows[0]["student_id"]
     # Race guard: if another registration of the same face landed first (lower id), keep the older one.
     older = [r for r in get_face_gallery() if r["student_id"] < new_id]
@@ -465,11 +539,37 @@ def create_student(new_name: str, face_embedding=None, voice_embedding=None):
     return rows
 
 
-def register_student(name: str, face_embedding, voice_embedding=None):
-    """Public registration entry point: create_student + a global rate limit on new profiles."""
-    check_throttle("student_register", "global", cfg.STUDENT_REGISTER_PER_HOUR, 60, count_success=True)
-    rows = create_student(name, face_embedding, voice_embedding)
-    record_attempt("student_register", "global", True)
+def reserve_student_registration() -> None:
+    """Atomically reserve a public registration attempt before expensive biometric inference."""
+    try:
+        result = _rpc(
+            "reserve_student_registration_attempt",
+            {"p_max_events": cfg.STUDENT_REGISTER_PER_HOUR, "p_window_minutes": 60},
+            "check student registration rate limits",
+        )
+    except DatabaseError as exc:
+        cause = exc.__cause__
+        if cause is not None and (
+            getattr(cause, "code", None) in ("PGRST202", "42883")
+            or "reserve_student_registration_attempt" in str(cause).lower()
+        ):
+            raise DatabaseError(
+                "Student registration needs supabase/migrations/008_atomic_attendance_corrections.sql."
+            ) from None
+        raise
+    if result is not True and result != [True]:
+        raise RateLimited("Too many registration attempts. Please try again in about an hour.")
+
+
+def register_student(name: str, face_embedding, voice_embedding=None, *, _reserved: bool = False,
+                     biometric_consent: bool = False):
+    """Public registration entry point with a global hourly limit on attempts."""
+    if get_script_run_ctx(suppress_warning=True) is not None and not biometric_consent:
+        raise InvalidInput("Consent to biometric processing is required to create a student profile.")
+    if not _reserved:
+        reserve_student_registration()
+    consent_at = _iso(_now()) if biometric_consent else None
+    rows = create_student(name, face_embedding, voice_embedding, consent_at, BIOMETRIC_CONSENT_VERSION if consent_at else None)
     return rows
 
 
@@ -557,6 +657,7 @@ def is_enrolled(student_id: int, subject_id: int) -> bool:
 
 def enroll_student_to_subject(student_id: int, subject_id: int) -> bool:
     """Idempotent. Returns True if newly enrolled, False if already enrolled."""
+    _require_student_session(student_id)
     if is_enrolled(student_id, subject_id):
         return False
     try:
@@ -567,6 +668,7 @@ def enroll_student_to_subject(student_id: int, subject_id: int) -> bool:
 
 
 def unenroll_student_to_subject(student_id: int, subject_id: int):
+    _require_student_session(student_id)
     # Preserve historical attendance, but mark rows from this enrollment period.
     _run(
         _t("attendance_logs").update({"student_status": "unenrolled"})
@@ -594,11 +696,13 @@ def get_enrolled_students(teacher_id: int, subject_id: int) -> list[dict]:
 
 
 def get_student_subjects(student_id: int):
+    _require_student_session(student_id)
     return _run(_t("subject_students").select("*, subjects(*)").eq("student_id", student_id), "load your subjects")
 
 
 # -------------------------------------------------------------------- attendance
 def get_student_attendance(student_id: int):
+    _require_student_session(student_id)
     return _run(_t("attendance_logs").select("*, subjects(*)").eq("student_id", student_id), "load your attendance")
 
 
@@ -697,39 +801,42 @@ def get_session_logs(teacher_id: int, subject_id: int, timestamp: str) -> list[d
 def correct_attendance(teacher_id: int, subject_id: int, timestamp: str, student_id: int, new_present: bool, reason: str) -> bool:
     """Change one student's attendance in a saved session and record who/when/why.
 
-    Returns False if nothing changed. Requires migration 002 (attendance_audit); we refuse to
-    change attendance without an audit trail.
+    Returns False if nothing changed. Requires migration 008, which updates the row and writes
+    its audit event atomically in PostgreSQL.
     """
     reason = _valid(clean_reason, reason)
     assert_teacher_owns_subject(teacher_id, subject_id)
-    rows = _run(
-        _t("attendance_logs").select("*").eq("subject_id", subject_id).eq("timestamp", timestamp).eq("student_id", student_id),
+    exists = _run(
+        _t("attendance_logs").select("log_id").eq("subject_id", subject_id)
+        .eq("timestamp", timestamp).eq("student_id", student_id),
         "load the record",
     )
-    if not rows:
+    if not exists:
         raise DatabaseError("That attendance record does not exist.")
-    old = bool(rows[0]["is_present"])
-    if old == bool(new_present):
-        return False
     try:
-        _run(
-            _t("attendance_audit").insert({
-                "subject_id": subject_id, "student_id": student_id, "session_timestamp": timestamp,
-                "old_present": old, "new_present": bool(new_present), "reason": reason, "changed_by": teacher_id,
-            }),
-            "write the audit entry",
+        result = _rpc(
+            "correct_attendance_transaction",
+            {
+                "p_teacher_id": teacher_id,
+                "p_subject_id": subject_id,
+                "p_session_timestamp": timestamp,
+                "p_student_id": student_id,
+                "p_new_present": bool(new_present),
+                "p_reason": reason,
+            },
+            "correct attendance",
         )
     except DatabaseError as exc:
-        raise DatabaseError("Corrections need the audit table. Run supabase/migrations/002_attendance_integrity.sql.") from exc
-    patch = {"is_present": bool(new_present), "source": "corrected"}
-    try:
-        _run(_t("attendance_logs").update(patch).eq("subject_id", subject_id).eq("timestamp", timestamp).eq("student_id", student_id), "update attendance")
-    except DatabaseError as exc:
-        if exc.__cause__ is not None and _is_missing_column(exc.__cause__):
-            _run(_t("attendance_logs").update({"is_present": bool(new_present)}).eq("subject_id", subject_id).eq("timestamp", timestamp).eq("student_id", student_id), "update attendance")
-        else:
-            raise
-    return True
+        cause = exc.__cause__
+        if cause is not None and (
+            getattr(cause, "code", None) in ("PGRST202", "42883")
+            or "correct_attendance_transaction" in str(cause).lower()
+        ):
+            raise DatabaseError(
+                "Atomic attendance corrections need supabase/migrations/008_atomic_attendance_corrections.sql."
+            ) from None
+        raise
+    return bool(result)
 
 
 def get_audit_trail(teacher_id: int, subject_id: int) -> list[dict]:
@@ -786,14 +893,14 @@ def _owned_assessment(teacher_id: int, assessment_id: int) -> dict:
 
 def set_published(teacher_id: int, assessment_id: int, published: bool) -> None:
     _owned_assessment(teacher_id, assessment_id)
-    patch = {"published": bool(published)}
+    patch = {"published": bool(published), "published_at": _iso(_now()) if published else None}
     _run(_t("assessments").update(patch).eq("assessment_id", assessment_id), "change publication")
 
 
 def get_marks(teacher_id: int, assessment_id: int) -> list[dict]:
     _owned_assessment(teacher_id, assessment_id)
     rows = _run(_t("marks").select("*, students(name)").eq("assessment_id", assessment_id), "load marks")
-    return [{"student_id": r["student_id"], "name": (r.get("students") or {}).get("name", r["student_id"]), "obtained": r["obtained"]} for r in rows]
+    return [{"student_id": r["student_id"], "name": (r.get("students") or {}).get("name") or r.get("student_name") or "Former student", "obtained": r["obtained"]} for r in rows]
 
 
 def import_marks(teacher_id: int, assessment_id: int, rows: list[dict]) -> int:
@@ -827,6 +934,7 @@ def get_marks_audit(teacher_id: int, assessment_id: int) -> list[dict]:
 
 def get_student_marks(student_id: int) -> list[dict]:
     """A student's own PUBLISHED marks only (the published filter is part of the query)."""
+    _require_student_session(student_id)
     rows = _run(
         _t("marks").select("*, assessments!inner(*)").eq("student_id", student_id).eq("assessments.published", True),
         "load your marks",
@@ -847,6 +955,7 @@ def get_student_marks(student_id: int) -> list[dict]:
 
 def get_student_pending_assessments(student_id: int) -> list[dict]:
     """Names of unpublished assessments in the student's subjects (never any marks)."""
+    _require_student_session(student_id)
     sub_ids = [r["subject_id"] for r in get_student_subjects(student_id)]
     if not sub_ids:
         return []

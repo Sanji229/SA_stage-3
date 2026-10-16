@@ -16,6 +16,7 @@ photo can match). See README "Limitations".
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -25,10 +26,9 @@ from PIL import Image, ImageOps
 from src.database import db
 from src.services import biometrics
 from src.settings import FACE_MATCH_MARGIN, FACE_MATCH_THRESHOLD, FACE_MIN_SIZE_PX, FACE_NUM_JITTERS
+from src.validation import MAX_IMAGE_SIDE
 
 log = logging.getLogger("smartattend.face")
-MAX_IMAGE_SIDE = 2000  # keeps dlib fast on phone-sized photos without losing small faces
-
 MATCHED, AMBIGUOUS, DUPLICATE, UNKNOWN = "matched", "ambiguous", "duplicate", "unknown"
 
 
@@ -146,6 +146,10 @@ def match_encodings(
     *whole* gallery is still consulted: if someone outside the class is a closer match, the
     face is marked ambiguous instead of being given to the nearest in-class student.
     """
+    if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("Face match threshold must be finite and between 0 and 1.")
+    if not math.isfinite(margin) or not 0.0 <= margin <= 2.0:
+        raise ValueError("Face match margin must be finite and between 0 and 2.")
     result = PhotoResult(num_faces=len(encodings))
     ids_arr = np.array(ids)
     for i, enc in enumerate(encodings):
@@ -177,6 +181,10 @@ def match_encodings(
         elif outsider:
             face.status, face.candidates = AMBIGUOUS, [int(ids_arr[best])]
             face.flags.append("other_class_closer")
+        elif "small_face" in face.flags:
+            # Low-resolution crops can be deceptively close to a stored embedding.
+            # Keep the candidate visible to the teacher, but do not auto-mark attendance.
+            face.status, face.candidates = AMBIGUOUS, [int(ids_arr[best])]
         else:
             face.status, face.student_id, face.candidates = MATCHED, int(ids_arr[best]), [int(ids_arr[best])]
 

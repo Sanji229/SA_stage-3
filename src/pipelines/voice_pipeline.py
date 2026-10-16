@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 
 import numpy as np
 import streamlit as st
@@ -15,9 +16,11 @@ import streamlit as st
 from dataclasses import dataclass, field
 
 from src.settings import VOICE_MATCH_MARGIN, VOICE_MATCH_THRESHOLD
+from src.validation import MAX_AUDIO_SECONDS
 
 log = logging.getLogger("smartattend.voice")
 SAMPLE_RATE = 16000
+MAX_SECONDS = MAX_AUDIO_SECONDS
 MIN_SEGMENT_SECONDS = 0.6
 VOICE_PROFILE_MIN_SECONDS = 5.0
 TURN_GAP_SECONDS = 0.7
@@ -36,9 +39,20 @@ def load_voice_encoder():
 
 def _load_audio(audio_bytes: bytes) -> np.ndarray:
     import librosa
+    import soundfile as sf
 
     try:
+        # Browser recordings are WAV. Inspect the header before decoding so an
+        # overlong file cannot allocate an unbounded waveform first.
+        try:
+            duration = sf.info(io.BytesIO(audio_bytes)).duration
+        except Exception:  # other formats may be readable by librosa's fallback decoder
+            duration = None
+        if duration is not None and duration > MAX_SECONDS:
+            raise VoiceError(f"Recording is too long (max {MAX_SECONDS // 60} minutes).")
         audio, _ = librosa.load(io.BytesIO(audio_bytes), sr=SAMPLE_RATE)
+    except VoiceError:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.exception("Could not decode audio")
         raise VoiceError("Could not read the audio recording. Please record again.") from exc
@@ -75,7 +89,7 @@ def cosine_similarity(a, b) -> float:
 
 
 # ------------------------------------------------------------------ audio quality
-MIN_SECONDS, MAX_SECONDS = 0.5, 600.0
+MIN_SECONDS = 0.5
 
 
 @dataclass
@@ -134,6 +148,10 @@ class SpeakerMatch:
 def rank_speakers(embedding, candidates: dict[int, list[float]], threshold: float = VOICE_MATCH_THRESHOLD,
                   margin: float = VOICE_MATCH_MARGIN) -> SpeakerMatch:
     """Never returns the nearest speaker blindly: weak => unknown, too close to call => ambiguous."""
+    if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("Voice match threshold must be finite and between 0 and 1.")
+    if not math.isfinite(margin) or not 0.0 <= margin <= 2.0:
+        raise ValueError("Voice match margin must be finite and between 0 and 2.")
     if embedding is None or not candidates:
         return SpeakerMatch("unknown")
     scored = sorted(((cosine_similarity(embedding, e), sid) for sid, e in candidates.items() if e), reverse=True)

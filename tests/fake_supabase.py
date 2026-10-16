@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import itertools
 import re
+from datetime import datetime, timedelta, timezone
 
 UNIQUE = {
     "teacher_invitations": [("token_hash",)],
@@ -55,6 +56,70 @@ class FakeSupabase:
 
     def table(self, name):
         return Query(self, name)
+
+    def rpc(self, name, params):
+        return RPCQuery(self, name, params)
+
+
+class RPCQuery:
+    """Small stand-in for the transactional correction and rate-limit functions."""
+
+    def __init__(self, db, name, params):
+        self.db, self.name, self.params = db, name, params
+
+    def execute(self):
+        if self.name == "delete_student_profile_anonymized":
+            sid = self.params["p_student_id"]
+            student = next((r for r in self.db.tables["students"] if r.get("student_id") == sid), None)
+            if student is None:
+                return Result(False)
+            for table in ("attendance_logs", "attendance_audit", "marks", "marks_audit"):
+                for row in self.db.tables[table]:
+                    if row.get("student_id") == sid:
+                        row["student_name"] = "Former student"
+                        row["student_id"] = None
+                        if table == "attendance_logs":
+                            row["student_status"] = "deleted"
+            self.db.tables["subject_students"] = [r for r in self.db.tables["subject_students"] if r.get("student_id") != sid]
+            self.db.tables["students"].remove(student)
+            return Result(True)
+        if self.name == "reserve_student_registration_attempt":
+            p = self.params
+            since = datetime.now(timezone.utc) - timedelta(minutes=p["p_window_minutes"])
+            rows = [r for r in self.db.tables["auth_attempts"]
+                    if r.get("kind") == "student_register" and r.get("key") == "global"
+                    and datetime.fromisoformat(r["attempted_at"]) > since]
+            if len(rows) >= p["p_max_events"]:
+                return Result(False)
+            row = {"kind": "student_register", "key": "global", "success": False,
+                   "attempted_at": datetime.now(timezone.utc).isoformat(),
+                   "attempt_id": next(self.db._ids["auth_attempts"])}
+            self.db.tables["auth_attempts"].append(row)
+            return Result(True)
+        if self.name != "correct_attendance_transaction":
+            raise APIError(f"function {self.name} does not exist", code="PGRST202")
+        p = self.params
+        teacher = next((r for r in self.db.tables["teachers"] if r.get("teacher_id") == p["p_teacher_id"]), None)
+        subject = next((r for r in self.db.tables["subjects"] if r.get("subject_id") == p["p_subject_id"]), None)
+        row = next((r for r in self.db.tables["attendance_logs"]
+                    if r.get("subject_id") == p["p_subject_id"]
+                    and r.get("timestamp") == p["p_session_timestamp"]
+                    and r.get("student_id") == p["p_student_id"]), None)
+        if not teacher or teacher.get("status", "active") != "active" or not subject or subject.get("teacher_id") != p["p_teacher_id"] or not row:
+            raise APIError("Attendance record not found or permission denied", code="42501")
+        if row.get("is_present") == p["p_new_present"]:
+            return Result(False)
+        audit = {
+            "subject_id": p["p_subject_id"], "student_id": p["p_student_id"],
+            "student_name": row.get("student_name", ""), "session_timestamp": p["p_session_timestamp"],
+            "old_present": row.get("is_present"), "new_present": p["p_new_present"],
+            "reason": p["p_reason"], "changed_by": p["p_teacher_id"],
+        }
+        audit["audit_id"] = next(self.db._ids["attendance_audit"])
+        self.db.tables["attendance_audit"].append(audit)
+        row["is_present"] = p["p_new_present"]
+        row["source"] = "corrected"
+        return Result(True)
 
 
 class Query:
