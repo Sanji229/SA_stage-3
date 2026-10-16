@@ -79,7 +79,7 @@ def _analyze_voice_sample(subject_id: int, capture: dict) -> None:
 
 @st.dialog("Voice attendance", width="large")
 def voice_attendance_dialog(subject_id):
-    st.write("Record students one at a time saying ‘Present, ma’am’ in their normal voice, with a short pause between speakers. Attendance responses do not need to be 5 seconds long. Overlapping voices cannot be identified reliably.")
+    st.write("Record students one at a time, with a short pause between speakers. Ask each student to read this sentence clearly and naturally for at least 5 seconds: “Present, ma’am. I am here in the class today.” Overlapping voices cannot be identified reliably.")
     capture = voice_capture(key="teacher_voice_attendance_capture", action_label="Analyze audio")
     if isinstance(capture, dict) and capture.get("submitted"):
         request_id = capture.get("request_id")

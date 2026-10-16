@@ -25,6 +25,7 @@ from src.services.attendance import (
     students_at_risk,
     merge_photo_results,
     new_session_timestamp,
+    parse_ts,
     records_to_frame,
     session_summary,
     subject_rates,
@@ -289,16 +290,13 @@ def tab_records():
 
 
 def _format_timestamp(value) -> str:
-    """Format timestamps from PostgREST whether it returns parsed values or ISO strings."""
+    """Show attendance timestamps in the same readable format as the summary table."""
     if value is None:
         return ""
-    isoformat = getattr(value, "isoformat", None)
-    if callable(isoformat):
-        try:
-            return isoformat()
-        except (TypeError, ValueError):
-            pass
-    return str(value)
+    parsed = parse_ts(str(value))
+    if parsed is None:
+        return str(value)
+    return parsed.strftime("%d %b %Y, %H:%M")
 
 
 def _render_attendance_history(history):
