@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import logging
 
 import streamlit as st
@@ -8,6 +11,7 @@ from src.components.dialog_enroll import enroll_dialog
 from src.components.footer import footer_dashboard
 from src.components.header import header_dashboard
 from src.components.subject_card import subject_card
+from src.components.voice_capture import voice_capture
 from src.database.db import (
     DatabaseError,
     register_student,
@@ -37,6 +41,22 @@ def _logout() -> None:
     st.session_state.pop("student_data", None)
     st.session_state.is_logged_in = False
     st.session_state.user_role = None
+
+
+def _save_student_voice_profile(student_id: int, capture: dict) -> None:
+    try:
+        with st.spinner("Processing your voice sample…"):
+            audio_bytes = base64.b64decode(capture.get("audio_base64", ""), validate=True)
+            embedding = get_voice_embedding(check_audio_bytes(audio_bytes))
+            update_student_voice_embedding(student_id, embedding)
+    except (binascii.Error, ValueError):
+        st.error("The recording could not be transferred. Please record again.")
+    except (ValidationError, VoiceError, DatabaseError) as exc:
+        st.error(str(exc))
+    except ImportError:
+        st.error("Voice recognition is not installed on this server.")
+    else:
+        st.success("Voice profile saved. You can record a new sample here to replace it.")
 
 
 def student_dashboard():
@@ -76,19 +96,14 @@ def student_dashboard():
     st.write("")
 
     with st.expander("Set up voice attendance"):
-        st.write("Record at least 5 seconds of clear speech while alone. Use your normal speaking voice; you can replace this sample anytime.")
-        voice_sample = st.audio_input("Record your voice sample", key="student_voice_profile")
-        if st.button("Save voice profile", key="save_voice_profile", disabled=voice_sample is None):
-            try:
-                with st.spinner("Processing your voice sample…"):
-                    embedding = get_voice_embedding(check_audio_bytes(voice_sample.getvalue()))
-                    update_student_voice_embedding(student["student_id"], embedding)
-            except (ValidationError, VoiceError, DatabaseError) as exc:
-                st.error(str(exc))
-            except ImportError:
-                st.error("Voice recognition is not installed on this server.")
-            else:
-                st.success("Voice profile saved. You can record a new sample here to replace it.")
+        st.write("Read the prompt below in your normal speaking voice while alone. Aim for at least 5 seconds; you can replace this sample anytime.")
+        st.info('“Hello, my name is [your name]. I am present today. I enjoy learning new things and sharing ideas with my classmates.”')
+        voice_sample = voice_capture(key="student_voice_profile_capture", action_label="Save voice profile")
+        if isinstance(voice_sample, dict) and voice_sample.get("submitted"):
+            request_id = voice_sample.get("request_id")
+            if request_id != st.session_state.get("student_voice_profile_request"):
+                st.session_state.student_voice_profile_request = request_id
+                _save_student_voice_profile(student["student_id"], voice_sample)
 
     if not subjects:
         empty_state("You are not enrolled in any subject yet. Use <b>Enroll in subject</b> and enter the code from your teacher.")
@@ -137,19 +152,27 @@ def student_dashboard():
 def _registration_form(photo) -> None:
     with st.container(border=True):
         st.subheader("Create your profile")
-        st.caption("Your face (and optional voice) is converted to numbers for matching. The photo itself is not stored.")
-        name = st.text_input("Your name", placeholder="e.g. Hamza Rizvi", max_chars=60,
+        st.caption("Your face and voice are converted to numbers for matching. The photo and raw recording are not stored.")
+        name = st.text_input("Your name", key="new_student_name", placeholder="e.g. Hamza Rizvi", max_chars=60,
                              help="Use letters, spaces, apostrophes, hyphens or dots; numbers are not allowed.")
-        st.markdown("**Optional: voice enrollment** for voice-only attendance")
-        audio = None
-        try:
-            audio = st.audio_input("Optional voice profile (speak alone for at least 5 seconds)")
-        except Exception:  # noqa: BLE001
-            st.info("Audio recording is not available in this browser.")
+        st.markdown("**Voice sample required** for voice attendance. Read this prompt naturally while alone for at least 5 seconds:")
+        prompt_name = name.strip() or "[your name]"
+        prompt = f"My name is {prompt_name}. I am present. Present, ma’am. Yes, ma’am."
+        st.info(f'“{prompt}”')
+        capture = voice_capture(key="student_registration_voice_capture")
 
-        if st.button("Create account", type="primary"):
+        if isinstance(capture, dict) and capture.get("submitted"):
+            request_id = capture.get("request_id")
+            if request_id == st.session_state.get("student_registration_voice_request"):
+                return
+            st.session_state.student_registration_voice_request = request_id
             if not name.strip():
-                st.warning("Please enter your name.")
+                st.warning("Please enter your name before creating the account.")
+                return
+            try:
+                audio_bytes = base64.b64decode(capture.get("audio_base64", ""), validate=True)
+            except (binascii.Error, ValueError):
+                st.error("The recording could not be transferred. Please record the prompt again.")
                 return
             with st.spinner("Creating your profile…"):
                 try:
@@ -158,19 +181,17 @@ def _registration_form(photo) -> None:
                     if len(encodings) != 1:
                         st.error("Exactly one clear face is needed to register. Please retake the photo.")
                         return
-                    voice_emb = None
-                    if audio is not None:
-                        # A recording that cannot be used must stop registration: no half-finished profile.
-                        voice_emb = get_voice_embedding(check_audio_bytes(audio.getvalue()))
+                    # A recording that cannot be used must stop registration: no half-finished profile.
+                    voice_emb = get_voice_embedding(check_audio_bytes(audio_bytes))
                     rows = register_student(name, encodings[0].tolist(), voice_emb)
                 except ValidationError as exc:
                     st.error(str(exc))
                     return
                 except VoiceError as exc:
-                    st.error(f"Voice enrolment failed: {exc} Re-record, or clear the recording to register with your face only.")
+                    st.error(f"Voice enrolment failed: {exc} Please record the prompt again.")
                     return
                 except ImportError:
-                    st.error("Voice enrolment is not available on this server. Clear the recording to register with your face only.")
+                    st.error("Voice enrolment is not available on this server, so the profile cannot be created right now.")
                     return
                 except DatabaseError as exc:
                     st.error(str(exc))
@@ -221,6 +242,10 @@ def student_screen():
             st.session_state.flash = f"Welcome back, {student['name']}!"
             st.rerun()
         else:
+            photo_digest = hashlib.sha256(photo.getvalue()).hexdigest()
+            if st.session_state.get("registration_photo_digest") != photo_digest:
+                st.session_state.registration_photo_digest = photo_digest
+                st.session_state.new_student_name = ""
             st.info("Face not recognised. If you are new, register below.")
             _registration_form(photo)
     footer_dashboard()

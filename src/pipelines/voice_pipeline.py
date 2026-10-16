@@ -18,7 +18,7 @@ from src.settings import VOICE_MATCH_MARGIN, VOICE_MATCH_THRESHOLD
 
 log = logging.getLogger("smartattend.voice")
 SAMPLE_RATE = 16000
-MIN_SEGMENT_SECONDS = 1.5
+MIN_SEGMENT_SECONDS = 0.6
 VOICE_PROFILE_MIN_SECONDS = 5.0
 TURN_GAP_SECONDS = 0.7
 
@@ -75,7 +75,7 @@ def cosine_similarity(a, b) -> float:
 
 
 # ------------------------------------------------------------------ audio quality
-MIN_SECONDS, MAX_SECONDS = 1.0, 600.0
+MIN_SECONDS, MAX_SECONDS = 0.5, 600.0
 
 
 @dataclass
@@ -98,7 +98,7 @@ def assess_audio(audio: np.ndarray, sr: int = SAMPLE_RATE) -> AudioQuality:
         q.issues.append("The recording is empty or corrupt."); q.fatal = True
         return q
     if dur < MIN_SECONDS:
-        q.issues.append(f"Recording is too short ({dur:.1f}s). Record at least {MIN_SECONDS:.0f}s."); q.fatal = True
+        q.issues.append(f"Recording is too short ({dur:.1f}s). Record a clear spoken response."); q.fatal = True
     if dur > MAX_SECONDS:
         q.issues.append("Recording is too long (max 10 minutes)."); q.fatal = True
     if q.peak < 0.01:

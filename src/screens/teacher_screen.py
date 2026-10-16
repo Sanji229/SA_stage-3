@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 
 import streamlit as st
 
@@ -271,11 +272,7 @@ def tab_records():
         When=view["when"].map(lambda d: d.isoformat() if d is not None else ""),
         Attendance=view["Present"].map({True: "Present", False: "Absent"}),
     )
-    st.dataframe(
-        history[["When", "Subject", "Subject Code", "Student", "Student status", "Attendance"]]
-        .sort_values("When", ascending=False),
-        hide_index=True, width="stretch",
-    )
+    _render_attendance_history(history.sort_values("When", ascending=False))
 
     _corrections_panel(teacher_id, view)
 
@@ -283,6 +280,35 @@ def tab_records():
     export = export.assign(When=export["when"].map(lambda d: d.isoformat() if d is not None else ""))
     csv = export[["When", "Subject", "Subject Code", "Student", "Student status", "Status"]].sort_values("When", ascending=False).to_csv(index=False)
     st.download_button("Download detailed CSV", csv, file_name="attendance.csv", mime="text/csv", icon=":material/download:")
+
+
+def _render_attendance_history(history):
+    """Render names with a visible enrollment-status badge in the detailed history."""
+    body = []
+    status_classes = {"Active": "active", "Unenrolled": "unenrolled", "Deleted": "deleted"}
+    for row in history.to_dict("records"):
+        status = str(row.get("Student status") or "Active")
+        badge_class = status_classes.get(status, "deleted")
+        attendance = str(row.get("Attendance", ""))
+        attendance_class = "present" if attendance == "Present" else "absent"
+        cells = (
+            row.get("When", ""), row.get("Subject", ""), row.get("Subject Code", ""),
+            row.get("Student", ""), row.get("Attendance", ""),
+        )
+        body.append(
+            "<tr>"
+            + "".join(f"<td>{escape(str(value if value is not None else ''))}</td>" for value in cells[:4])
+            + f'<td><span class="sa-status-badge {badge_class}">{escape(status)}</span></td>'
+            + f'<td><span class="sa-status-badge {attendance_class}">{escape(attendance)}</span></td>'
+            + "</tr>"
+        )
+    st.markdown(
+        '<div class="sa-history-scroll"><table class="sa-history-table">'
+        "<thead><tr><th>When</th><th>Subject</th><th>Code</th><th>Student</th>"
+        "<th>Enrollment</th><th>Attendance</th></tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _corrections_panel(teacher_id, view):

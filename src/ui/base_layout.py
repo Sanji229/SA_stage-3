@@ -102,7 +102,53 @@ div[data-testid="stDataFrame"] {{ border:1px solid var(--sa-border); border-radi
 .sa-bar > span {{ display:block; height:100%; background:var(--sa-accent); }}
 .sa-empty {{ text-align:center; color:var(--sa-muted); border:1.5px dashed var(--sa-border); border-radius:16px; padding:2rem 1rem; background:#fff; }}
 .sa-footer {{ text-align:center; color:var(--sa-muted); font-size:.85rem; margin-top:2.5rem; }}
-@media (max-width:640px) {{ .block-container {{ padding:1rem .75rem 2rem; }} .stApp h1.sa-page-title {{ font-size:1.45rem; }} }}
+.sa-history-scroll {{ max-width:100%; overflow-x:auto; border:1px solid var(--sa-border); border-radius:12px; background:#fff; }}
+.sa-history-table {{ width:100%; min-width:680px; border-collapse:collapse; font-size:.9rem; }}
+.sa-history-table th, .sa-history-table td {{ padding:.7rem .8rem; border-bottom:1px solid var(--sa-border); text-align:left; vertical-align:middle; }}
+.sa-history-table th {{ background:#F8FAFC; color:var(--sa-muted); font-weight:600; white-space:nowrap; }}
+.sa-status-badge {{ display:inline-block; padding:.2rem .6rem; border-radius:999px; font-size:.78rem; font-weight:600; white-space:nowrap; }}
+.sa-status-badge.active {{ background:#EEF0FF; color:#4338CA; }}
+.sa-status-badge.unenrolled {{ background:#FEF3C7; color:#92400E; }}
+.sa-status-badge.deleted {{ background:#F1F5F9; color:#475569; }}
+.sa-status-badge.present {{ background:#DCFCE7; color:#166534; }}
+.sa-status-badge.absent {{ background:#FEE2E2; color:#991B1B; }}
+/* Narrow layouts: size controls for phones and prevent the page from overflowing. */
+@media (max-width:768px) {{
+  html, body, .stApp, [data-testid="stAppViewContainer"] {{ max-width:100%; overflow-x:hidden; }}
+  .block-container {{ width:100%; max-width:100%; padding:1rem .75rem 2rem; }}
+  .stApp h1.sa-page-title {{ font-size:1.45rem; }}
+  .stApp h2 {{ font-size:1.25rem; }}
+  .stApp h3 {{ font-size:1.1rem; }}
+  .stButton, .stDownloadButton, .stLinkButton, [data-testid="stFormSubmitButton"] {{ width:100%; }}
+  .stButton > button, .stDownloadButton > button, .stLinkButton > a,
+  [data-testid="stFormSubmitButton"] > button {{ width:100%; white-space:normal; min-height:2.75rem; }}
+  input, textarea, [data-baseweb="select"] {{ max-width:100%; }}
+  video, img, canvas {{ max-width:100%; height:auto; }}
+  div[data-testid="stDataFrame"], div[data-testid="stTable"] {{ max-width:100%; overflow-x:auto; }}
+  div[data-testid="stTabs"] [role="tablist"] {{ overflow-x:auto; flex-wrap:nowrap; }}
+  div[data-testid="stTabs"] [role="tab"] {{ flex:0 0 auto; white-space:nowrap; }}
+  div[data-testid="stDialog"], div[role="dialog"] {{
+    width:calc(100vw - 1rem) !important; max-width:calc(100vw - 1rem) !important;
+    max-height:94dvh !important; overflow-y:auto !important;
+  }}
+  .st-key-attendance_review_grid {{ max-width:100%; overflow-x:auto; padding-bottom:.5rem; }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] {{
+    flex-wrap:nowrap !important; min-width:640px;
+  }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+    flex:1 1 0% !important; width:auto !important; min-width:0 !important;
+  }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(1) {{ flex:2 1 0% !important; }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(2) {{ flex:.8 1 0% !important; }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(3) {{ flex:.9 1 0% !important; }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(4) {{ flex:1.5 1 0% !important; }}
+  .st-key-attendance_review_grid div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-child(5) {{ flex:2.2 1 0% !important; }}
+}}
+@media (max-width:420px) {{
+  .block-container {{ padding:.75rem .6rem 1.5rem; }}
+  div[data-testid="stMetric"] {{ padding:.75rem; }}
+  div[data-testid="stExpander"] {{ border-radius:12px; }}
+}}
 @media (prefers-reduced-motion:reduce) {{ * {{ transition:none !important; scroll-behavior:auto !important; animation:none !important; }} }}
 </style>
 """

@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 8px; color: #0f172a; font: 14px system-ui, sans-serif; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { min-height: 42px; padding: 8px 14px; border: 1px solid #cbd5e1; border-radius: 10px; background: white; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
+    button.primary { background: #4f46e5; color: white; border-color: #4f46e5; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    audio { display: block; width: 100%; margin: 12px 0; }
+    #download { display: inline-block; margin-top: 8px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; color: #0f172a; text-decoration: none; }
+    #download[hidden] { display: none; }
+    #status { min-height: 22px; margin: 8px 0; color: #475569; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <button id="record">Start recording</button>
+    <button id="save" class="primary">Create account</button>
+    <button id="clear">Clear sample</button>
+  </div>
+  <div id="status" role="status">Record a clear voice sample. The action button stops and submits it automatically.</div>
+  <audio id="preview" controls hidden></audio>
+  <a id="download" hidden download="voice_sample.wav">Download recording</a>
+  <script>
+    const recordButton = document.getElementById("record");
+    const saveButton = document.getElementById("save");
+    const clearButton = document.getElementById("clear");
+    const status = document.getElementById("status");
+    const preview = document.getElementById("preview");
+    const download = document.getElementById("download");
+    let stream = null;
+    let recorder = null;
+    let chunks = [];
+    let wavBytes = null;
+    let requestId = 0;
+    let submitAfterStop = false;
+    let discardAfterStop = false;
+    let actionLabel = "Create account";
+
+    function post(type, value) {
+      window.parent.postMessage({isStreamlitMessage: true, type, ...value}, "*");
+    }
+    function setHeight() {
+      post("streamlit:setFrameHeight", {height: document.body.scrollHeight});
+    }
+    function bytesToBase64(bytes) {
+      let binary = "";
+      const step = 0x8000;
+      for (let i = 0; i < bytes.length; i += step) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + step));
+      }
+      return btoa(binary);
+    }
+    async function toWav(blob) {
+      const context = new AudioContext();
+      const decoded = await context.decodeAudioData(await blob.arrayBuffer());
+      const targetRate = 16000;
+      const frameCount = Math.ceil(decoded.duration * targetRate);
+      const offline = new OfflineAudioContext(1, frameCount, targetRate);
+      const source = offline.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offline.destination);
+      source.start();
+      const rendered = await offline.startRendering();
+      const samples = rendered.getChannelData(0);
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+      const write = (offset, value) => [...value].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+      write(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); write(8, "WAVE");
+      write(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true); view.setUint32(24, targetRate, true);
+      view.setUint32(28, targetRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+      write(36, "data"); view.setUint32(40, samples.length * 2, true);
+      for (let i = 0; i < samples.length; i++) {
+        const sample = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      }
+      await context.close();
+      return new Uint8Array(buffer);
+    }
+    async function finishRecording() {
+      if (discardAfterStop) {
+        discardAfterStop = false;
+        chunks = [];
+        wavBytes = null;
+        preview.hidden = true;
+        status.textContent = "Sample cleared. Record a clear voice sample.";
+      } else {
+        try {
+          const blob = new Blob(chunks, {type: recorder.mimeType || "audio/webm"});
+          wavBytes = await toWav(blob);
+          preview.src = URL.createObjectURL(new Blob([wavBytes], {type: "audio/wav"}));
+          preview.hidden = false;
+          download.href = preview.src;
+          download.hidden = false;
+          status.textContent = "Sample ready.";
+          saveButton.disabled = false;
+          if (submitAfterStop) submitSample();
+        } catch (error) {
+          status.textContent = "Could not prepare the recording. Please try again.";
+          saveButton.disabled = false;
+        }
+      }
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      stream = null;
+      recorder = null;
+      recordButton.textContent = "Start recording";
+      recordButton.disabled = false;
+      setHeight();
+    }
+    async function startRecording() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({audio: true});
+        const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
+        recorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined);
+        chunks = [];
+        wavBytes = null;
+        preview.hidden = true;
+        recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+        recorder.onstop = finishRecording;
+        recorder.start();
+        recordButton.textContent = "Stop recording";
+        status.textContent = "Recording… Click Create account to stop and save this sample.";
+      } catch (error) {
+        status.textContent = "Microphone access is unavailable. Allow microphone access and try again.";
+        saveButton.disabled = false;
+      }
+      setHeight();
+    }
+    function submitSample() {
+      if (!wavBytes) return;
+      saveButton.disabled = true;
+      status.textContent = "Submitting your voice sample…";
+      post("streamlit:setComponentValue", {dataType: "json", value: {
+        submitted: true, request_id: `${Date.now()}-${++requestId}`, audio_base64: bytesToBase64(wavBytes)
+      }});
+    }
+    recordButton.addEventListener("click", async () => {
+      if (recorder && recorder.state === "recording") {
+        saveButton.disabled = true;
+        recordButton.disabled = true;
+        recorder.stop();
+        status.textContent = "Finishing recording…";
+      } else {
+        await startRecording();
+      }
+    });
+    saveButton.addEventListener("click", () => {
+      if (recorder && recorder.state === "recording") {
+        submitAfterStop = true;
+        saveButton.disabled = true;
+        recordButton.disabled = true;
+        status.textContent = "Stopping and preparing the sample…";
+        recorder.stop();
+      } else if (wavBytes) {
+        submitSample();
+      } else {
+        status.textContent = "Record a voice sample first.";
+      }
+    });
+    clearButton.addEventListener("click", () => {
+      if (recorder && recorder.state === "recording") {
+        discardAfterStop = true;
+        recordButton.disabled = true;
+        recorder.stop();
+      }
+      submitAfterStop = false;
+      chunks = [];
+      wavBytes = null;
+      preview.removeAttribute("src");
+      preview.hidden = true;
+      download.hidden = true;
+      saveButton.disabled = false;
+      status.textContent = "Sample cleared. Record a clear voice sample.";
+    });
+    window.addEventListener("message", event => {
+      if (!event.data || event.data.type !== "streamlit:render") return;
+      actionLabel = event.data.args.action_label || "Create account";
+      saveButton.textContent = actionLabel;
+      saveButton.disabled = false;
+      setHeight();
+    });
+    post("streamlit:componentReady", {apiVersion: 1});
+    setHeight();
+  </script>
+</body>
+</html>

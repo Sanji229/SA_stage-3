@@ -71,6 +71,32 @@ div[data-testid="stExpander"] { max-width:800px; width:calc(100% - 2.5rem); marg
   .lp-hero .lp-wrap { grid-template-columns:1fr; gap:2rem; } .lp-hero h1 { font-size:2.35rem; }
   .lp-links, .lp-actions .lp-btn.hide-sm { display:none; } .lp-menu { display:block; } .lp-sec { padding:3rem 0; }
 }
+@media (max-width:640px) {
+  .lp-wrap { padding:0 1rem; }
+  .lp-nav .lp-wrap { min-height:64px; height:auto; gap:.5rem; }
+  .lp-nav .sa-brand { font-size:1.1rem; gap:.4rem; }
+  .lp-nav .sa-brand svg, .lp-nav .sa-brand img { width:30px; height:30px; }
+  .lp-actions { gap:.4rem; }
+  .lp-actions > .lp-btn.primary { padding:.55rem .7rem; font-size:.88rem; }
+  .lp-menu summary { padding:.5rem .65rem; }
+  .lp-menu nav { right:.5rem; max-width:calc(100vw - 1rem); }
+  .lp-hero { padding:2.75rem 0 2.5rem; }
+  .lp-hero h1 { font-size:clamp(2rem, 9vw, 2.35rem); }
+  .stApp .lp-lead { font-size:1rem; }
+  .lp-cta .lp-btn { flex:1 1 100%; text-align:center; }
+  .lp-preview { padding:.8rem; animation:none; }
+  .lp-pv-head, .lp-row { flex-wrap:wrap; gap:.35rem; }
+  .lp-sec { padding:2.5rem 0; }
+  .lp-sec h2, .lp-final h2 { font-size:1.65rem; }
+  .lp-sec .lp-sub { margin-bottom:1.5rem; font-size:.98rem; }
+  .lp-grid, .lp-steps { grid-template-columns:minmax(0, 1fr); }
+  .lp-card, .lp-step { padding:1.15rem; }
+  div[data-testid="stExpander"] { width:100%; max-width:100%; }
+  .lp-faq { padding:0; }
+  .lp-foot .lp-wrap { display:block; }
+  .lp-foot nav { display:flex; flex-wrap:wrap; gap:.5rem 1rem; margin-top:.8rem; }
+  .lp-foot a { margin-left:0; }
+}
 </style>
 """
 
