@@ -98,15 +98,35 @@ def load_dlib_models():
 
 
 def detect_faces(image) -> list[tuple[tuple[int, int, int, int], np.ndarray]]:
-    """Detect faces and compute one 128-d embedding per face. Returns [(bbox, embedding)]."""
+    """Detect faces in an uploaded photo, retrying quarter turns if needed.
+
+    Returned boxes always use the normalized input image's coordinate system.
+    """
     detector, sp, facerec = load_dlib_models()
     img = to_rgb_array(image)
-    out = []
-    for rect in detector(img, 1):
-        shape = sp(img, rect)
-        enc = np.array(facerec.compute_face_descriptor(img, shape, FACE_NUM_JITTERS))
-        out.append(((rect.left(), rect.top(), rect.right(), rect.bottom()), enc))
-    return out
+    height, width = img.shape[:2]
+    for turns in range(4):
+        oriented = np.ascontiguousarray(np.rot90(img, turns)) if turns else img
+        rects = detector(oriented, 1)
+        if not rects:
+            continue
+
+        out = []
+        for rect in rects:
+            shape = sp(oriented, rect)
+            enc = np.array(facerec.compute_face_descriptor(oriented, shape, FACE_NUM_JITTERS))
+            left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
+            if turns == 1:  # np.rot90: counter-clockwise
+                bbox = (width - bottom, left, width - top, right)
+            elif turns == 2:
+                bbox = (width - right, height - bottom, width - left, height - top)
+            elif turns == 3:
+                bbox = (top, height - right, bottom, height - left)
+            else:
+                bbox = (left, top, right, bottom)
+            out.append((bbox, enc))
+        return out
+    return []
 
 
 def get_face_embeddings(image) -> list[np.ndarray]:
