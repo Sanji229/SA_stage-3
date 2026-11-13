@@ -27,10 +27,16 @@ MAX_AUDIO_SECONDS = 600
 # Common raster formats that Pillow can decode reliably in this app. Keep this
 # list aligned with the uploader's accepted extensions below.
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "ICO", "AVIF", "JPEG2000", "PPM", "TGA"}
+# Pillow's extension registry can vary by version/build. Keep the standard
+# JPEG aliases explicit so Streamlit's browser-side file filter always accepts
+# both .jpg and .jpeg; add any other aliases Pillow knows about as a convenience.
 ALLOWED_IMAGE_EXTENSIONS = sorted(
-    extension.lstrip(".").lower()
-    for extension, image_format in Image.registered_extensions().items()
-    if image_format in ALLOWED_IMAGE_FORMATS
+    {"jpg", "jpeg"}
+    | {
+        extension.lstrip(".").lower()
+        for extension, image_format in Image.registered_extensions().items()
+        if image_format in ALLOWED_IMAGE_FORMATS
+    }
 )
 
 _NAME_ALLOWED = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .'\u2019-])*$", re.UNICODE)
