@@ -26,7 +26,7 @@ MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_AUDIO_SECONDS = 600
 # Common raster formats that Pillow can decode reliably in this app. Keep this
 # list aligned with the uploader's accepted extensions below.
-ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "ICO", "AVIF", "JPEG2000", "PPM", "TGA"}
+ALLOWED_IMAGE_FORMATS = {"JPEG", "MPO", "PNG", "WEBP", "BMP", "TIFF", "GIF", "ICO", "AVIF", "JPEG2000", "PPM", "TGA"}
 # Pillow's extension registry can vary by version/build. Keep the standard
 # JPEG aliases explicit so Streamlit's browser-side file filter always accepts
 # both .jpg and .jpeg; add any other aliases Pillow knows about as a convenience.
@@ -121,8 +121,9 @@ def check_image_bytes(raw: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> Image.Ima
             raise ValidationError("The image resolution is too large.")
         probe.verify()
         img = Image.open(io.BytesIO(raw))
-        # Multi-frame files use their first frame for a single attendance image.
-        if getattr(img, "is_animated", False):
+        # Multi-frame files (including phone MPO photos) use their first frame
+        # for a single attendance image.
+        if getattr(img, "is_animated", False) or getattr(img, "n_frames", 1) > 1:
             img.seek(0)
         if max(img.size) > MAX_IMAGE_SIDE:
             # Pillow can decode some formats directly at thumbnail scale, reducing
