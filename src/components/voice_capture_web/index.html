@@ -13,7 +13,7 @@
     html, body {
       margin: 0;
       padding: 0;
-      min-height: 300px;
+      min-height: 0;
       width: 100%;
       color: #0f172a;
       font: 14px system-ui, sans-serif;
@@ -59,6 +59,10 @@
       margin: 12px 0;
     }
 
+    audio[hidden] {
+      display: none;
+    }
+
     #download {
       display: inline-block;
       margin-top: 8px;
@@ -70,8 +74,7 @@
     }
 
     #download[hidden],
-    #recording-time[hidden],
-    audio[hidden] {
+    #recording-time[hidden] {
       display: none;
     }
 
@@ -145,37 +148,32 @@
     let recordingStartedAt = 0;
     let maxDurationReached = false;
 
-    let actionLabel = "Create account";
-
-    // -----------------------------------------
+    // ---------------------------------
     // Streamlit communication
-    // -----------------------------------------
+    // ---------------------------------
 
     function post(type, value = {}) {
-      window.parent.postMessage(
-        {
-          isStreamlitMessage: true,
-          type: type,
-          ...value
-        },
-        "*"
-      );
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: type,
+        ...value
+      }, "*");
     }
 
-    // -----------------------------------------
-    // IMPORTANT: IFRAME HEIGHT FIX
-    // -----------------------------------------
+    // ---------------------------------
+    // Dynamic iframe height
+    // ---------------------------------
 
     function setHeight() {
-      const contentHeight = Math.max(
-        document.body.scrollHeight,
-        document.documentElement.scrollHeight,
-        document.body.offsetHeight,
-        300
+      const height = Math.ceil(
+        Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight
+        )
       );
 
       post("streamlit:setFrameHeight", {
-        height: contentHeight
+        height: height
       });
     }
 
@@ -183,13 +181,10 @@
       requestAnimationFrame(() => {
         setHeight();
 
-        requestAnimationFrame(() => {
-          setHeight();
-        });
+        requestAnimationFrame(setHeight);
       });
     }
 
-    // Recalculate height whenever the component changes.
     if (typeof ResizeObserver !== "undefined") {
       const resizeObserver = new ResizeObserver(() => {
         setHeight();
@@ -201,9 +196,9 @@
     window.addEventListener("load", scheduleHeightUpdate);
     window.addEventListener("resize", scheduleHeightUpdate);
 
-    // -----------------------------------------
+    // ---------------------------------
     // Recording timer
-    // -----------------------------------------
+    // ---------------------------------
 
     function updateRecordingTime() {
       if (!recordingStartedAt) return;
@@ -224,9 +219,9 @@
         `Recording time: ${minutesText}:${secondsText}`;
     }
 
-    // -----------------------------------------
-    // Convert bytes to Base64
-    // -----------------------------------------
+    // ---------------------------------
+    // Base64 conversion
+    // ---------------------------------
 
     function bytesToBase64(bytes) {
       let binary = "";
@@ -241,10 +236,10 @@
       return btoa(binary);
     }
 
-    // -----------------------------------------
-    // Convert recorded audio to WAV
+    // ---------------------------------
+    // Convert audio to WAV
     // 16 kHz, mono, PCM 16-bit
-    // -----------------------------------------
+    // ---------------------------------
 
     async function toWav(blob) {
       const context = new AudioContext();
@@ -261,7 +256,7 @@
         );
 
         if (frameCount <= 0) {
-          throw new Error("Empty audio recording");
+          throw new Error("Empty recording");
         }
 
         const offline = new OfflineAudioContext(
@@ -294,7 +289,6 @@
           });
         };
 
-        // WAV header
         write(0, "RIFF");
         view.setUint32(
           4,
@@ -321,7 +315,6 @@
           true
         );
 
-        // PCM samples
         for (let i = 0; i < samples.length; i++) {
           const sample = Math.max(
             -1,
@@ -344,9 +337,9 @@
       }
     }
 
-    // -----------------------------------------
-    // Clear recording timers
-    // -----------------------------------------
+    // ---------------------------------
+    // Timer cleanup
+    // ---------------------------------
 
     function clearRecordingTimers() {
       if (maxRecordingTimer) {
@@ -360,9 +353,9 @@
       }
     }
 
-    // -----------------------------------------
-    // Stop and process recording
-    // -----------------------------------------
+    // ---------------------------------
+    // Finish recording
+    // ---------------------------------
 
     async function finishRecording() {
       clearRecordingTimers();
@@ -392,7 +385,7 @@
       } else {
         try {
           if (!chunks.length) {
-            throw new Error("No audio data captured");
+            throw new Error("No audio captured");
           }
 
           const blob = new Blob(chunks, {
@@ -451,9 +444,9 @@
       scheduleHeightUpdate();
     }
 
-    // -----------------------------------------
+    // ---------------------------------
     // Start recording
-    // -----------------------------------------
+    // ---------------------------------
 
     async function startRecording() {
       try {
@@ -462,7 +455,7 @@
           !navigator.mediaDevices.getUserMedia ||
           typeof MediaRecorder === "undefined"
         ) {
-          throw new Error("Browser recording is not supported");
+          throw new Error("Recording not supported");
         }
 
         stream = await navigator.mediaDevices.getUserMedia({
@@ -500,6 +493,7 @@
 
         recorder.onerror = event => {
           console.error("MediaRecorder error:", event);
+
           status.textContent =
             "Recording error. Please try again.";
         };
@@ -555,9 +549,9 @@
       scheduleHeightUpdate();
     }
 
-    // -----------------------------------------
-    // Submit audio to Streamlit
-    // -----------------------------------------
+    // ---------------------------------
+    // Submit audio to Python
+    // ---------------------------------
 
     function submitSample() {
       if (!wavBytes) {
@@ -572,7 +566,6 @@
 
       post("streamlit:setComponentValue", {
         dataType: "json",
-
         value: {
           submitted: true,
           request_id: `${Date.now()}-${++requestId}`,
@@ -581,9 +574,9 @@
       });
     }
 
-    // -----------------------------------------
+    // ---------------------------------
     // Record button
-    // -----------------------------------------
+    // ---------------------------------
 
     recordButton.addEventListener("click", async () => {
       if (recorder && recorder.state === "recording") {
@@ -591,8 +584,7 @@
 
         recordButton.disabled = true;
 
-        status.textContent =
-          "Finishing recording…";
+        status.textContent = "Finishing recording…";
 
         recorder.stop();
 
@@ -601,9 +593,9 @@
       }
     });
 
-    // -----------------------------------------
-    // Save / action button
-    // -----------------------------------------
+    // ---------------------------------
+    // Save button
+    // ---------------------------------
 
     saveButton.addEventListener("click", () => {
       if (recorder && recorder.state === "recording") {
@@ -621,14 +613,13 @@
         submitSample();
 
       } else {
-        status.textContent =
-          "Record a voice sample first.";
+        status.textContent = "Record a voice sample first.";
       }
     });
 
-    // -----------------------------------------
+    // ---------------------------------
     // Clear button
-    // -----------------------------------------
+    // ---------------------------------
 
     clearButton.addEventListener("click", () => {
       submitAfterStop = false;
@@ -665,38 +656,36 @@
       scheduleHeightUpdate();
     });
 
-    // -----------------------------------------
+    // ---------------------------------
     // Streamlit render messages
-    // -----------------------------------------
+    // ---------------------------------
 
     window.addEventListener("message", event => {
       if (!event.data) return;
 
       if (event.data.type === "streamlit:render") {
-        actionLabel =
-          event.data.args?.action_label || "Create account";
+        const args = event.data.args || {};
 
-        saveButton.textContent = actionLabel;
+        saveButton.textContent =
+          args.action_label || "Create account";
 
         scheduleHeightUpdate();
       }
     });
 
-    // -----------------------------------------
+    // ---------------------------------
     // Initialize component
-    // -----------------------------------------
+    // ---------------------------------
 
-    // Request a visible initial height.
+    // Small initial height; actual content height follows.
     post("streamlit:setFrameHeight", {
-      height: 300
+      height: 100
     });
 
-    // Tell Streamlit that the component is ready.
     post("streamlit:componentReady", {
       apiVersion: 1
     });
 
-    // Recalculate after initialization.
     scheduleHeightUpdate();
 
   </script>
