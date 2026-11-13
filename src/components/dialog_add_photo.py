@@ -27,17 +27,17 @@ def add_photos_dialog():
             key="dialog_upload",
         )
         if files and st.button(f"Add {len(files)} photo(s)", type="primary"):
-            bad = 0
+            failures = []
             for f in files:
                 if len(images) >= MAX_PHOTOS:
                     st.warning(f"Limit of {MAX_PHOTOS} photos per session reached.")
                     break
                 try:
                     images.append(check_image_bytes(f.getvalue()))
-                except ValidationError:
-                    bad += 1
-            if bad:
-                st.session_state.flash_warn = f"{bad} file(s) could not be read as images and were skipped."
+                except ValidationError as exc:
+                    failures.append(f"{f.name}: {exc}")
+            if failures:
+                st.session_state.flash_warn = "Some photos were skipped:\n" + "\n".join(failures)
             st.rerun()
 
     st.caption(f"{len(images)} photo(s) added")

@@ -197,4 +197,4 @@ def show_flash() -> None:
         st.toast(msg, icon=":material/check_circle:")
     warn = st.session_state.pop("flash_warn", None)
     if warn:
-        st.toast(warn, icon=":material/warning:")
+        st.warning(warn, icon=":material/warning:")
